@@ -1,0 +1,440 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <meta name="color-scheme" content="dark" />
+    <link
+      rel="icon"
+      href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%230a0b0d'/%3E%3Cpath d='M4 22 L12 10 L20 22' stroke='%23ffcf7a' stroke-width='2' fill='none' stroke-linejoin='round'/%3E%3Cpath d='M12 22 C16 6 22 26 28 12' stroke='%233dff9c' stroke-width='2' fill='none' stroke-linecap='round'/%3E%3C/svg%3E"
+    />
+    <title>网页 Demo 入口 · CHT-1192</title>
+    <meta
+      name="description"
+      content="两个纯前端 Demo 的静态入口：2D 光线追踪（精确边缘锁定）与网页版示波器音乐播放器 / XY 可视化器。无需安装、零依赖、打开即用。"
+    />
+    <style>
+      :root {
+        --bg: #0a0b0d;
+        --card: rgba(255, 255, 255, 0.022);
+        --card-hi: rgba(255, 255, 255, 0.045);
+        --line: rgba(255, 255, 255, 0.085);
+        --text: #e8e9ec;
+        --dim: #8d919b;
+        --dimmer: #6b6f78;
+        --amber: #ffcf7a;
+        --green: #3dff9c;
+        --mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
+        --sans: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC",
+          "Hiragino Sans GB", "Microsoft YaHei", system-ui, sans-serif;
+        --r: 16px;
+      }
+
+      * {
+        box-sizing: border-box;
+      }
+
+      html {
+        -webkit-text-size-adjust: 100%;
+      }
+
+      body {
+        margin: 0;
+        min-height: 100vh;
+        padding: clamp(28px, 6vw, 76px) clamp(18px, 5vw, 40px) 48px;
+        background: var(--bg);
+        color: var(--text);
+        font-family: var(--sans);
+        line-height: 1.6;
+        -webkit-font-smoothing: antialiased;
+      }
+
+      /* 两盏极暗的色灯，分别对应两个 Demo 的强调色 */
+      body::before {
+        content: "";
+        position: fixed;
+        inset: 0;
+        z-index: -1;
+        pointer-events: none;
+        background:
+          radial-gradient(58vw 42vw at 12% -6%, rgba(255, 207, 122, 0.075), transparent 62%),
+          radial-gradient(56vw 44vw at 92% 4%, rgba(61, 255, 156, 0.06), transparent 64%);
+      }
+
+      .wrap {
+        max-width: 1080px;
+        margin: 0 auto;
+      }
+
+      header {
+        margin-bottom: clamp(26px, 4vw, 44px);
+      }
+
+      .kicker {
+        font-family: var(--mono);
+        font-size: 12px;
+        letter-spacing: 0.14em;
+        text-transform: uppercase;
+        color: var(--dimmer);
+      }
+
+      h1 {
+        margin: 10px 0 12px;
+        font-size: clamp(28px, 4.6vw, 44px);
+        line-height: 1.15;
+        letter-spacing: -0.02em;
+        font-weight: 650;
+      }
+
+      .lede {
+        margin: 0;
+        max-width: 46em;
+        color: var(--dim);
+        font-size: clamp(14px, 1.6vw, 16px);
+      }
+
+      .grid {
+        display: grid;
+        gap: 22px;
+        grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
+      }
+
+      .card {
+        position: relative;
+        display: flex;
+        flex-direction: column;
+        border: 1px solid var(--line);
+        border-radius: var(--r);
+        background: var(--card);
+        overflow: hidden;
+        transition:
+          transform 0.22s ease,
+          border-color 0.22s ease,
+          background 0.22s ease,
+          box-shadow 0.22s ease;
+      }
+
+      .card:hover,
+      .card:focus-within {
+        transform: translateY(-3px);
+        background: var(--card-hi);
+        border-color: color-mix(in srgb, var(--accent) 42%, var(--line));
+        box-shadow:
+          0 18px 50px rgba(0, 0, 0, 0.55),
+          0 0 0 1px color-mix(in srgb, var(--accent) 14%, transparent);
+      }
+
+      .shot {
+        position: relative;
+        aspect-ratio: 16 / 10;
+        background: #05060a;
+        border-bottom: 1px solid var(--line);
+      }
+
+      .shot img {
+        display: block;
+        width: 100%;
+        height: 100%;
+        object-fit: cover;
+        object-position: center;
+      }
+
+      .shot::after {
+        content: "";
+        position: absolute;
+        inset: 0;
+        background: linear-gradient(to top, rgba(10, 11, 13, 0.92) 2%, transparent 46%);
+      }
+
+      .body {
+        display: flex;
+        flex-direction: column;
+        flex: 1;
+        gap: 12px;
+        padding: 20px 22px 22px;
+      }
+
+      .title {
+        display: flex;
+        align-items: baseline;
+        flex-wrap: wrap;
+        gap: 10px;
+      }
+
+      .title h2 {
+        margin: 0;
+        font-size: 19px;
+        font-weight: 620;
+        letter-spacing: -0.01em;
+      }
+
+      .title .en {
+        font-family: var(--mono);
+        font-size: 11.5px;
+        letter-spacing: 0.04em;
+        color: var(--dimmer);
+      }
+
+      .bar {
+        width: 34px;
+        height: 3px;
+        border-radius: 2px;
+        background: var(--accent);
+        opacity: 0.85;
+      }
+
+      p.desc {
+        margin: 0;
+        color: var(--dim);
+        font-size: 14.5px;
+      }
+
+      ul.chips {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 7px;
+        margin: 2px 0 0;
+        padding: 0;
+        list-style: none;
+      }
+
+      ul.chips li {
+        padding: 3px 9px;
+        border: 1px solid color-mix(in srgb, var(--accent) 22%, var(--line));
+        border-radius: 999px;
+        background: color-mix(in srgb, var(--accent) 6%, transparent);
+        color: color-mix(in srgb, var(--accent) 72%, var(--text));
+        font-family: var(--mono);
+        font-size: 11.5px;
+        white-space: nowrap;
+      }
+
+      .actions {
+        display: flex;
+        align-items: center;
+        gap: 14px;
+        margin-top: auto;
+        padding-top: 16px;
+      }
+
+      .open {
+        display: inline-flex;
+        align-items: center;
+        gap: 8px;
+        padding: 9px 16px;
+        border-radius: 10px;
+        border: 1px solid color-mix(in srgb, var(--accent) 46%, transparent);
+        background: color-mix(in srgb, var(--accent) 11%, transparent);
+        color: color-mix(in srgb, var(--accent) 88%, #fff);
+        font-size: 14px;
+        font-weight: 560;
+        text-decoration: none;
+        transition:
+          background 0.18s ease,
+          border-color 0.18s ease;
+      }
+
+      .open:hover {
+        background: color-mix(in srgb, var(--accent) 20%, transparent);
+        border-color: color-mix(in srgb, var(--accent) 66%, transparent);
+      }
+
+      .open .arrow {
+        transition: transform 0.18s ease;
+      }
+
+      .card:hover .open .arrow {
+        transform: translateX(3px);
+      }
+
+      .source {
+        position: relative;
+        z-index: 2;
+        color: var(--dimmer);
+        font-family: var(--mono);
+        font-size: 12px;
+        text-decoration: none;
+      }
+
+      .source:hover {
+        color: var(--text);
+        text-decoration: underline;
+        text-underline-offset: 3px;
+      }
+
+      /* 整张卡片可点：铺满卡片的隐形链接，源码链接浮在其上 */
+      .stretch::after {
+        content: "";
+        position: absolute;
+        inset: 0;
+        z-index: 1;
+      }
+
+      .note {
+        display: flex;
+        gap: 9px;
+        margin-top: 12px;
+        color: var(--dimmer);
+        font-size: 12.5px;
+      }
+
+      .note b {
+        color: var(--dim);
+        font-weight: 560;
+      }
+
+      footer {
+        margin-top: clamp(30px, 5vw, 52px);
+        padding-top: 20px;
+        border-top: 1px solid var(--line);
+        display: flex;
+        flex-wrap: wrap;
+        gap: 8px 20px;
+        justify-content: space-between;
+        color: var(--dimmer);
+        font-size: 12.5px;
+      }
+
+      footer a {
+        color: var(--dim);
+        text-decoration: none;
+      }
+
+      footer a:hover {
+        color: var(--text);
+        text-decoration: underline;
+        text-underline-offset: 3px;
+      }
+
+      code {
+        font-family: var(--mono);
+        font-size: 0.92em;
+        color: var(--dim);
+      }
+
+      @media (prefers-reduced-motion: reduce) {
+        * {
+          transition-duration: 0.01ms !important;
+        }
+
+        .card:hover,
+        .card:focus-within {
+          transform: none;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <div class="wrap">
+      <header>
+        <div class="kicker">github pages · 静态入口</div>
+        <h1>网页 Demo 入口</h1>
+        <p class="lede">
+          两个纯前端 Demo，直接跑在浏览器里：<b>不需要安装、没有依赖、打开就能用</b>。
+          页面本身就是构建产物，源仓库各自独立。
+        </p>
+      </header>
+
+      <main class="grid">
+        <article class="card" style="--accent: var(--amber)">
+          <div class="shot">
+            <img
+              src="./assets/2d-ray-trace.png"
+              alt="2D 光线追踪 Demo 主画面：点光源、方块与硬阴影"
+              loading="eager"
+              decoding="async"
+            />
+          </div>
+          <div class="body">
+            <div class="bar"></div>
+            <div class="title">
+              <h2>2D 光线追踪 Demo</h2>
+              <span class="en">exact edge locking</span>
+            </div>
+            <p class="desc">
+              2D 点光源硬阴影：每个角区间只投 1 条射线问出遮挡者，阴影边界再精确钉回角点上——
+              射线数由角点数决定、与 360 无关，边界沿「光源 → 角点」走，0 误差。
+            </p>
+            <ul class="chips">
+              <li>52 条射线/帧</li>
+              <li>面积误差 0.0002%</li>
+              <li>WebGL2</li>
+              <li>零依赖</li>
+            </ul>
+            <p class="note">
+              <span>▸</span>
+              <span>首次打开随机挑一颗种子，所以每个人看到的世界都不一样；打开「调试射线」能直接看到每条射线终止在角点上。</span>
+            </p>
+            <div class="actions">
+              <a class="open stretch" href="./2d-ray-trace/"
+                >打开 Demo <span class="arrow">→</span></a
+              >
+              <a
+                class="source"
+                href="https://github.com/CHT-1192/2D-Ray-Trace-Demo"
+                target="_blank"
+                rel="noopener"
+                >源码 ↗</a
+              >
+            </div>
+          </div>
+        </article>
+
+        <article class="card" style="--accent: var(--green)">
+          <div class="shot">
+            <img
+              src="./assets/oscilloscope.png"
+              alt="示波器音乐播放器画面：电子束轨迹画出的矢量图形"
+              loading="eager"
+              decoding="async"
+            />
+          </div>
+          <div class="body">
+            <div class="bar"></div>
+            <div class="title">
+              <h2>网页版示波器音乐播放器</h2>
+              <span class="en">oscilloscope music · XY visualizer</span>
+            </div>
+            <p class="desc">
+              左声道 → X 轴，右声道 → Y 轴，用电子束轨迹画出利萨如图形和示波器音乐里的矢量画面。
+              两个硬性要求都做到了：没有回扫线，没有辉光。
+            </p>
+            <ul class="chips">
+              <li>无回扫线</li>
+              <li>无辉光</li>
+              <li>单文件自包含</li>
+              <li>零依赖</li>
+            </ul>
+            <p class="note">
+              <span>▸</span>
+              <span>站点不内置音乐文件，把本地音频（<code>.flac</code> / <code>.wav</code> / <code>.mp3</code>…）拖进窗口即可播放。</span>
+            </p>
+            <div class="actions">
+              <a class="open stretch" href="./oscilloscope/"
+                >打开 Demo <span class="arrow">→</span></a
+              >
+              <a
+                class="source"
+                href="https://github.com/CHT-1192/web-oscilloscope-music-player-visualizer"
+                target="_blank"
+                rel="noopener"
+                >源码 ↗</a
+              >
+            </div>
+          </div>
+        </article>
+      </main>
+
+      <footer>
+        <span>本仓库只做静态入口，Demo 的构建产物由 <code>scripts/sync-demos.sh</code> 从各自仓库同步。</span>
+        <span>
+          <a href="https://github.com/CHT-1192/CHT-1192.github.io" target="_blank" rel="noopener"
+            >本站源码</a
+          >
+          ·
+          <a href="https://github.com/CHT-1192" target="_blank" rel="noopener">@CHT-1192</a>
+        </span>
+      </footer>
+    </div>
+  </body>
+</html>
