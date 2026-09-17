@@ -40,7 +40,9 @@ for f in index.html app.js styles.css; do
 done
 # 示波器那份不读源仓库的 oscilloscope-standalone.html：它是构建产物，
 # 源仓库里未必跟着 public/ 更新（已经踩过一次），这里永远从 public/ 现拼。
-for f in index.html app.js styles.css; do
+# 入口是 public/js/main.js —— 上游已把 app.js 拆成 public/js/*.js 模块。
+[ -d "$OSC_REPO/public/js" ] || die "缺少目录：$OSC_REPO/public/js"
+for f in index.html styles.css js/main.js; do
   need_file "$OSC_REPO/public/$f"
 done
 need_file "$TWO_D_REPO/docs/screenshot.png"

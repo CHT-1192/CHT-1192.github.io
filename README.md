@@ -24,9 +24,16 @@
 
 示波器仓库里提交的 `oscilloscope-standalone.html` 是**构建产物**，未必跟着 `public/` 一起更新
 （踩过一次：`public/` 加了预设面板，单文件版还是旧的，直接复制就会把旧版发上线）。所以本站不读
-那个文件，而是由 `scripts/build-standalone.mjs` 从 `public/` 的三个源文件现拼，逻辑与上游的
-`build-standalone.js` 等价 —— 拿旧版输入校验过，产物逐字节一致。拼完还会自检产物里没有任何
-外部引用。
+那个文件，而是由 `scripts/build-standalone.mjs` 从 `public/` 现拼，逻辑与上游的
+`build-standalone.js` 等价：入口 `public/js/main.js`，`public/js/*.js` 这 8 个 ES 模块按拓扑序
+收进一个小注册表（`__define` / `__req`）再内联进 HTML。拼完会自检产物里没有任何外部引用。
+
+等价性是逐字节校过的 —— 拿上游提交过的两个产物（拆分前、拆分后各一个）各复现一次，hash 都对得上。
+
+上游的模块方言很小，构建脚本只认 `import * as ns from './x.js'`、`export function`、
+`export const`、`export { ... }`；遇到 `export let`、`default`、`export *`、动态 `import()`
+或循环依赖会直接报错而不是猜。所以改 `public/js/` 时如果用了别的写法，先跑一次上游的
+`node build-standalone.js`，本站这边的同步也会以同样的规则失败并告诉你原因。
 
 ## 更新流程
 
