@@ -2,8 +2,8 @@
 #
 # 把两个 Demo 的构建产物同步进本站，让入口页永远指向最新的构建。
 #
-#   scripts/sync-demos.sh            # 直接复制各自仓库里现成的构建产物
-#   scripts/sync-demos.sh --build    # 先重新构建，再复制（会用 npm / node）
+#   scripts/sync-demos.sh            # 复制 2D 的 dist、重新拼装示波器单文件版
+#   scripts/sync-demos.sh --build    # 先用 npm / node 重新构建 2D 的 dist，再同步
 #
 # 源仓库默认取 ~/Projects 下的同名目录，可用环境变量覆盖：
 #   TWO_D_REPO=/path/to/2D-Ray-Trace-Demo
@@ -33,28 +33,39 @@ need_file() {
 if [ "$DO_BUILD" = 1 ]; then
   printf '▸ 构建 2D-Ray-Trace-Demo\n'
   ( cd "$TWO_D_REPO" && npm run --silent build )
-  printf '▸ 构建 Web-Oscilloscope 单文件版\n'
-  ( cd "$OSC_REPO" && node build-standalone.js )
 fi
 
 for f in index.html app.js styles.css; do
   need_file "$TWO_D_REPO/dist/$f"
 done
-need_file "$OSC_REPO/oscilloscope-standalone.html"
+# 示波器那份不读源仓库的 oscilloscope-standalone.html：它是构建产物，
+# 源仓库里未必跟着 public/ 更新（已经踩过一次），这里永远从 public/ 现拼。
+for f in index.html app.js styles.css; do
+  need_file "$OSC_REPO/public/$f"
+done
 need_file "$TWO_D_REPO/docs/screenshot.png"
-need_file "$OSC_REPO/docs/preview.png"
+# 入口页预览图用 docs/ui.png（带完整界面）而不是 docs/preview.png：
+# 后者只是纯画布截图，上游加了预设面板之后就没再更新过。
+need_file "$OSC_REPO/docs/ui.png"
 
 printf '▸ 同步 2D 光线追踪 Demo → 2d-ray-trace/\n'
 cp "$TWO_D_REPO/dist/index.html" "$ROOT/2d-ray-trace/index.html"
 cp "$TWO_D_REPO/dist/app.js" "$ROOT/2d-ray-trace/app.js"
 cp "$TWO_D_REPO/dist/styles.css" "$ROOT/2d-ray-trace/styles.css"
 
-printf '▸ 同步示波器单文件版 → oscilloscope/index.html\n'
-cp "$OSC_REPO/oscilloscope-standalone.html" "$ROOT/oscilloscope/index.html"
+printf '▸ 从 public/ 拼装示波器单文件版 → oscilloscope/index.html\n'
+OSC_REPO="$OSC_REPO" node "$ROOT/scripts/build-standalone.mjs"
 
 printf '▸ 同步入口页预览图 → assets/\n'
 cp "$TWO_D_REPO/docs/screenshot.png" "$ROOT/assets/2d-ray-trace.png"
-cp "$OSC_REPO/docs/preview.png" "$ROOT/assets/oscilloscope.png"
+cp "$OSC_REPO/docs/ui.png" "$ROOT/assets/oscilloscope.png"
+
+# 源仓库里那份提交过的单文件版如果和 public/ 对不上，说明它过期了 ——
+# 本站不受影响（我们是从 public/ 现拼的），但值得提醒一句。
+COMMITTED="$OSC_REPO/oscilloscope-standalone.html"
+if [ -f "$COMMITTED" ] && ! cmp -s "$COMMITTED" "$ROOT/oscilloscope/index.html"; then
+  printf '\n  ! 提醒：%s\n' "${COMMITTED#$PROJECTS/} 落后于 public/，该仓库自己提交的那份该重新生成了。"
+fi
 
 printf '\n完成。当前产物：\n'
 ( cd "$ROOT" && find 2d-ray-trace oscilloscope assets -type f -print0 |

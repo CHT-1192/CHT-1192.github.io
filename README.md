@@ -6,9 +6,10 @@
 | --- | --- |
 | `/` | 入口页：两张卡片，分别指向下面两个 Demo |
 | `/2d-ray-trace/` | [2D-Ray-Trace-Demo](https://github.com/CHT-1192/2D-Ray-Trace-Demo) 的 `dist/` 构建产物（WebGL2，静态） |
-| `/oscilloscope/` | [web-oscilloscope-music-player-visualizer](https://github.com/CHT-1192/web-oscilloscope-music-player-visualizer) 的单文件自包含版（`oscilloscope-standalone.html`） |
+| `/oscilloscope/` | [web-oscilloscope-music-player-visualizer](https://github.com/CHT-1192/web-oscilloscope-music-player-visualizer) 的单文件自包含版，由 `public/` 现拼 |
 | `/assets/` | 入口页用的预览图，取自两个仓库的 `docs/` |
 | `/scripts/sync-demos.sh` | 从两个源仓库同步构建产物到本站 |
+| `/scripts/build-standalone.mjs` | 把示波器的 `public/{index.html,styles.css,app.js}` 拼成单文件版 |
 
 本站只托管**构建产物**，不包含源码；源码在各自仓库里。入口页是手写的单个 `index.html`，
 内联样式，无构建步骤、无 JS 依赖。
@@ -19,19 +20,27 @@
 接口。单文件版本身就是为「拷到任何地方双击打开」设计的：没有任何外部请求，音频靠拖拽/选择
 本地文件。站点也不内置音乐文件（源仓库里的 `.flac` 有几十上百 MB）。
 
+## 为什么自己拼单文件版
+
+示波器仓库里提交的 `oscilloscope-standalone.html` 是**构建产物**，未必跟着 `public/` 一起更新
+（踩过一次：`public/` 加了预设面板，单文件版还是旧的，直接复制就会把旧版发上线）。所以本站不读
+那个文件，而是由 `scripts/build-standalone.mjs` 从 `public/` 的三个源文件现拼，逻辑与上游的
+`build-standalone.js` 等价 —— 拿旧版输入校验过，产物逐字节一致。拼完还会自检产物里没有任何
+外部引用。
+
 ## 更新流程
 
 源仓库改完之后：
 
 ```bash
 scripts/sync-demos.sh --build   # 重新构建再同步（需要 npm / node）
-scripts/sync-demos.sh           # 或者只复制现成的构建产物
+scripts/sync-demos.sh           # 或者直接用各自的产物同步
 
 git add -A && git commit -m "Sync demo builds" && git push
 ```
 
-`--build` 会先跑 `2D-Ray-Trace-Demo` 的 `npm run build` 和示波器仓库的 `node build-standalone.js`，
-并且**先全部构建、再统一复制**，所以中途失败不会留下半新半旧的站点。
+`--build` 会先跑 `2D-Ray-Trace-Demo` 的 `npm run build`；示波器那份不论哪种模式都从 `public/`
+现拼。整个脚本**先全部构建、再统一复制**，所以中途失败不会留下半新半旧的站点。
 
 源仓库默认按 `../2D-Ray-Trace-Demo`、`../Web-Oscilloscope-Music-Player-Visualizer` 查找，
 可用 `TWO_D_REPO=` / `OSC_REPO=` 指定别的路径。
