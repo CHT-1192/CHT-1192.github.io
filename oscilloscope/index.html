@@ -110,7 +110,6 @@ body.dragging::after {
   display: block;
 }
 #bg { z-index: 0; }
-#burnin { z-index: 1; }   /* burn-in sits under the live trace, over the graticule */
 #trace { z-index: 2; }
 
 /* ── empty state ──────────────────────────────────────────────────────── */
@@ -767,10 +766,9 @@ body.idle { cursor: none; }
 <body>
 
 <main id="app">
-  <!-- ── 显示区：三层画布 —— 静态背景/网格 → 烧屏累积层 → 余辉轨迹 ──────── -->
+  <!-- ── 显示区：两层画布 —— 静态背景/网格 → 余辉轨迹 ──────────────────── -->
   <div class="stage" id="stage">
     <canvas id="bg" aria-hidden="true"></canvas>
-    <canvas id="burnin" aria-hidden="true"></canvas>
     <canvas id="trace" aria-label="示波器 XY 显示区"></canvas>
     <!-- ── 空状态提示 ──────────────────────────────────────────────────── -->
   <div class="hint" id="dropHint">
@@ -871,10 +869,10 @@ body.idle { cursor: none; }
 
       <section class="group">
         <h3>电子束 <span>beam</span></h3>
-        <label class="row"><span>亮度</span><input type="range" data-set="intensity" min="0.1" max="2" step="0.01" /><output data-out="intensity"></output></label>
+        <label class="row" title="束流曝光量。能量模型下细线需要更大的值才和粗线一样亮，所以范围到 4"><span>亮度</span><input type="range" data-set="intensity" min="0.05" max="4" step="0.01" /><output data-out="intensity"></output></label>
         <label class="row"><span>线宽</span><input type="range" data-set="lineWidth" min="0.5" max="3" step="0.05" /><output data-out="lineWidth"></output></label>
+        <label class="row" title="halation：荧光粉发出的光在粉层和玻璃里横向散射，所以整个图形周围浮起一层又宽又暗的雾，亮点则被糊成亮球。它加在色调映射之后，因此亮度有上限、不会糊掉笔画。密集图形上很明显，单根细线周围几乎看不见 —— 这是卷积本来的样子。0 = 关（画面与从前逐像素一致）"><span>光晕</span><input type="range" data-set="halo" min="0" max="100" step="1" /><output data-out="halo"></output></label>
         <label class="row"><span>余辉</span><input type="range" data-set="persistence" min="0" max="100" step="1" /><output data-out="persistence"></output></label>
-        <label class="row" title="束流曝光的累积残影，衰减比余辉慢得多。0 = 关，100% = 永久烧屏；拖回 0 可清除"><span>烧屏</span><input type="range" data-set="burnIn" min="0" max="100" step="1" /><output data-out="burnIn"></output></label>
         <label class="row" title="余辉衰减撞上 8 位量化地板后留下的永久痕迹。余辉越高地板越高，所以「余辉拉高」会留下更亮的残影。0 = 关（定期彻底擦除），越大残留越明显"><span>残留</span><input type="range" data-set="residue" min="0" max="100" step="1" /><output data-out="residue"></output></label>
         <label class="row"><span>颜色</span><input type="color" data-set="color" /><output data-out="color"></output></label>
         <div class="swatches" id="swatches"></div>
@@ -888,6 +886,8 @@ body.idle { cursor: none; }
           <button type="button" class="pill" data-toggle="autoGain" title="按峰值自动调整整体增益，两轴同系数">自动增益</button>
           <button type="button" class="pill" data-toggle="grid" title="显示刻度网格">网格</button>
           <button type="button" class="pill" data-toggle="beamDot" title="在束当前位置画一个亮点">光点</button>
+          <button type="button" class="pill" data-toggle="invertY" title="Y 轴反向。XY 示波器的约定是 X=左声道、Y=右声道且正方向朝上，但曲子的制作方式（或参考视频里那台机器的 Y 输入）可能正好相反 —— 那就把这一轴翻过来">Y 反向</button>
+          <button type="button" class="pill" data-toggle="invertX" title="X 轴反向。和 Y 反向同理：某些曲子/素材是按相反的手性录的">X 反向</button>
         </div>
         <label class="row" title="比平均束速快多少倍以上的线段直接不画。1× 最激进，15× 以上基本等于不消隐；不同曲子的回扫速度不一样"><span>消隐阈值</span><input type="range" data-set="blankRatio" min="1" max="15" step="0.5" /><output data-out="blankRatio"></output></label>
         <button type="button" class="ghost" id="btnReset">恢复默认设置</button>
@@ -1037,12 +1037,13 @@ const BUCKETS = 10;          // velocity-blanking brightness levels (bucket 0 = 
 const DEFAULTS = {
   gainX: 1, gainY: 1, offX: 0, offY: 0,
   windowIdx: 2,
-  intensity: 0.9, lineWidth: 1.75, persistence: 24, burnIn: 0, residue: 0,
-  blankRatio: 10,
+  intensity: 0.9, lineWidth: 1.75, persistence: 24, residue: 0,
+  blankRatio: 10, halo: 0,
   color: '#3dff9c',
   rateMode: 'auto',
   renderScale: 'auto',
   blanking: true, trigger: false, autoGain: false, grid: true, beamDot: false,
+  invertX: false, invertY: false,
 };
 const S = Object.assign({}, DEFAULTS);
 const winSize = () => WINDOW_CHOICES[clamp(S.windowIdx | 0, 0, WINDOW_CHOICES.length - 1)];
@@ -1058,17 +1059,19 @@ const flags = { redraw: true, settle: 0 };
 const PRESET_KEYS = Object.keys(DEFAULTS).filter((k) => k !== 'rateMode' && k !== 'renderScale');
 
 const FORMATTERS = {
-  gainX: (v) => Number(v).toFixed(2),
-  gainY: (v) => Number(v).toFixed(2),
+  // The readout carries the sign the mapping actually uses, so a flipped axis
+  // never shows a bare "+1.00" next to a picture that is upside down.
+  gainX: (v) => (S.invertX ? '-' : '') + Number(v).toFixed(2),
+  gainY: (v) => (S.invertY ? '-' : '') + Number(v).toFixed(2),
   offX: (v) => Number(v).toFixed(2),
   offY: (v) => Number(v).toFixed(2),
   windowIdx: () => winSize().toLocaleString('en-US'),
   intensity: (v) => Number(v).toFixed(2),
   lineWidth: (v) => Number(v).toFixed(2) + ' px',
   persistence: (v) => Math.round(v) + ' %',
-  burnIn: (v) => (v <= 0 ? '关' : v >= 99.5 ? '永久' : Math.round(v) + ' %'),
   residue: (v) => (v <= 0 ? '关' : Math.round(v) + ' %'),
   blankRatio: (v) => (Number.isInteger(v) ? String(v) : v.toFixed(1)) + '×',
+  halo: (v) => (v <= 0 ? '关' : Math.round(v) + ' %'),
   color: (v) => String(v).toUpperCase(),
 };
 
@@ -1076,7 +1079,7 @@ const PRESET_COLORS = ['#3dff9c', '#7ef9ff', '#ffd166', '#ff6b8a', '#c4a7ff', '#
 /* -------------------------------------------------------------------- dom */
 
 const dom = {
-  stage: $('stage'), bg: $('bg'), burnin: $('burnin'), trace: $('trace'), audio: $('audio'),
+  stage: $('stage'), bg: $('bg'), trace: $('trace'), audio: $('audio'),
   hint: $('dropHint'), hintNote: $('hintNote'),
   trackTitle: $('trackTitle'), trackSub: $('trackSub'),
   seek: $('seek'), tCur: $('tCur'), tDur: $('tDur'),
@@ -1483,6 +1486,7 @@ const signal = () => ({ L: bufL, R: bufR, capacity: analyserSize, float: useFloa
 const status = () => ({
   engineRate: ac ? ac.sampleRate : 0,
   contextState: ac ? ac.state : 'none',
+  clockMs: ac ? ac.currentTime * 1000 : 0,   // advances only while the graph runs
   sourceRate,
   analyserSize,
   source,
@@ -1516,47 +1520,726 @@ __exp.teardownEngine = teardownEngine;
 __exp.updateRateBadge = updateRateBadge;
 });
 
-/* ---- js/render.js -------------------------------------------------- */
-__define("js/render.js", function (__exp, __req) {
-const core = __req("js/core.js");
-const audio = __req("js/audio.js");
+/* ---- js/shaders.js ------------------------------------------------- */
+__define("js/shaders.js", function (__exp, __req) {
+/* ============================================================================
+ *  shaders.js — the GLSL the energy renderer is made of
+ *
+ *  Kept apart from gl.js because GLSL is a different language with a different
+ *  debug loop: a typo here is a compile error the driver reports, while a typo
+ *  in gl.js is a JavaScript error. Each program states what it is for and, where
+ *  it matters, what it deliberately does NOT do.
+ *
+ *  The model: E += exposure · Σ (1/v) · spot, E *= exp(-dt/τ), display =
+ *  colour · (1 - exp(-E/E₀)), and — opt-in, after the tone map — a scatter of
+ *  the emitted light for halation.
+ * ========================================================================== */
 
-/* Geometry, the graticule, the beam, the two accumulation layers, the frame
-   loop and the quality governor. Everything in here is about pixels: the
-   samples arrive as arguments from audio.js, and the transport readout is a
-   hook the UI installs, so this module depends on neither. */
+const VERT_QUAD = `#version 300 es
+in vec2 aPos;
+out vec2 vUv;
+void main() {
+  vUv = aPos * 0.5 + 0.5;
+  gl_Position = vec4(aPos, 0.0, 1.0);
+}`;
+
+const FRAG_DECAY = `#version 300 es
+precision highp float;
+in vec2 vUv;
+uniform sampler2D uAcc;
+uniform float uKeep;
+out vec4 outColour;
+void main() {
+  outColour = vec4(texture(uAcc, vUv).r * uKeep, 0.0, 0.0, 1.0);
+}`;
+
+const FRAG_COPY = `#version 300 es
+precision highp float;
+in vec2 vUv;
+uniform sampler2D uAcc;
+out vec4 outColour;
+void main() {
+  outColour = vec4(texture(uAcc, vUv).r, 0.0, 0.0, 1.0);
+}`;
+
+const VERT_BEAM = `#version 300 es
+in vec2 aCorner;                 // the unit quad, 6 vertices, shared by all instances
+in vec2 aP0;                     // segment start, device pixels
+in vec2 aP1;                     // segment end
+in float aEnergy;                // exposure for this segment (∝ 1/speed, 0 = blanked)
+uniform vec2 uViewport;
+uniform float uHalfWidth;        // Gaussian sigma, in pixels (the beam's own width)
+uniform float uExposure;         // energy per unit of 1/v, per frame
+out vec2 vPos;                   // pixel position
+out vec2 vA;                     // segment start
+out vec2 vB;                     // segment end
+out float vEnergy;
+out float vSigma;
+
+vec2 toClip(vec2 p) {
+  return vec2(p.x / uViewport.x * 2.0 - 1.0, 1.0 - p.y / uViewport.y * 2.0);
+}
+
+void main() {
+  vec2 seg = aP1 - aP0;
+  float len = max(length(seg), 0.0001);
+  vec2 dir = seg / len;
+  vec2 nrm = vec2(-dir.y, dir.x);
+  float sigma = uHalfWidth;
+  float reach = sigma * 3.0;                          // ~3σ covers the spot
+  vec2 along = dir * (len * 0.5 + reach);
+  vec2 across = nrm * reach;
+  vec2 centre = (aP0 + aP1) * 0.5;
+  vec2 p = centre + along * aCorner.x + across * aCorner.y;
+
+  vPos = p;
+  vA = aP0;
+  vB = aP1;
+  vEnergy = aEnergy;
+  vSigma = sigma;
+  gl_Position = vec4(toClip(p), 0.0, 1.0);
+}`;
+
+const FRAG_BEAM = `#version 300 es
+precision highp float;
+in vec2 vPos;
+in vec2 vA;
+in vec2 vB;
+in float vEnergy;
+in float vSigma;
+out vec4 outColour;
+
+/* Distance from a point to a segment, and where along it the closest point is:
+   the spot is a Gaussian centred on the beam, so the deposit across the line
+   follows that profile and the ends fade the way a real spot's do. */
+uniform float uExposure;
+
+void main() {
+  vec2 ab = vB - vA;
+  float len2 = max(dot(ab, ab), 0.0001);
+  float t = clamp(dot(vPos - vA, ab) / len2, 0.0, 1.0);
+  vec2 closest = vA + ab * t;
+  float d = length(vPos - closest);
+  /* Gaussian, but with the tail SUBTRACTED so it reaches exactly zero at 3σ of
+     THIS instance's sigma — the quad's edge. A phosphor spot does have Gaussian
+     wings, but an additive tail that never reaches zero is an unbounded halo, and
+     "brightness never bleeds into a pixel the beam did not illuminate" is a hard
+     requirement here. Swelling sigma (the opt-in halo) widens the spot; it never
+     gives it a tail. */
+  float g = exp(-(d * d) / (2.0 * vSigma * vSigma)) - 0.011109;   // exp(-4.5)
+  outColour = vec4(vEnergy * uExposure * max(g, 0.0), 0.0, 0.0, 1.0);
+}`;
+
+const FRAG_TONE = `#version 300 es
+precision highp float;
+in vec2 vUv;
+uniform sampler2D uAcc;
+uniform vec3 uColour;
+uniform float uE0;
+out vec4 outColour;
+void main() {
+  float e = texture(uAcc, vUv).r;
+  // Saturating, not clipping: linear while the phosphor is dim, asymptotic as it
+  // approaches full brightness.
+  float a = 1.0 - exp(-max(e, 0.0) / uE0);
+  outColour = vec4(uColour * a, a);          // premultiplied, for compositing
+}`;
+
+/* ------------------------------------------------------------------ halation
+   Light generated in the phosphor does not all leave where it was made: it
+   scatters sideways in the powder and then bounces inside the glass, so a bright
+   trace sits inside a wide, dim cloud. That cloud is what a photograph of a real
+   scope shows around the whole figure (reference photos 2 and 3), and it is NOT
+   a property of the beam.
+
+   Which is exactly why it has to happen HERE and not in the beam pass. Applied
+   to the energy buffer, a dwell deposits thousands of times the energy that
+   saturates the tone map, so any halo term is itself saturated out to its own
+   cutoff — the result is a flat disc with a hard edge, which is what the first
+   attempt produced. Halation scatters light that has ALREADY been emitted, i.e.
+   the bounded luminance, and then it can never exceed its own amplitude.
+
+   Five mip levels, weighted, approximate the long-tailed point spread function
+   for five texture fetches and no extra passes. Sum of weights = 1, so the cloud
+   adds at most uMix to any pixel. */
+/* The taps are AVERAGES over 8, 16, 32, 64, 128 and 256 pixels, and how they are
+   weighted is the whole game. Weighting the narrow ones (the obvious "bloom"
+   choice) gives a tight halo that hugs the trace and dies within one octave.
+   Weighting them EQUALLY gives each octave the same contribution, which is what
+   a long-tailed, roughly 1/r glare looks like: a bright core, then a skirt that
+   keeps going out to a sixth of the screen. That is the cloud in reference
+   photos 2 and 3, and it is a convolution — its far field is the local average
+   luminance, which is why the cloud is obvious around a dense figure and nearly
+   invisible around one thin line. Nothing here rescales that away: the taps sum
+   to 1 and every tap is <= 1, so the cloud adds at most uMix and never becomes a
+   second image of the trace. */
+const FRAG_HALO = `#version 300 es
+precision highp float;
+in vec2 vUv;
+uniform sampler2D uSrc;          // tone-mapped frame, mipmapped
+uniform sampler2D uNear;         // blurred mip 4  (~16 px cells)
+uniform sampler2D uWide;         // blurred mip 6  (~64 px cells)
+uniform vec3 uColour;
+uniform float uMix;              // halation amplitude; 0 = the pass is skipped
+out vec4 outColour;
+
+/* Three scales of the same scatter: a tight one (mip 1, whose 2-px cells are
+   already finer than a CSS pixel so its lattice is invisible), a mid one and a
+   wide one, both blurred first — see FRAG_BLUR.
+
+   The taps are AVERAGES, and how they are weighted is the whole game. Weighting
+   the narrow ones (the obvious "bloom" choice) gives a halo that hugs the trace
+   and dies within one octave; weighting the octaves EQUALLY gives the long,
+   roughly 1/r tail that reaches a sixth of the screen. That tail is the cloud in
+   reference photos 2 and 3.
+
+   Being a convolution of what is already on screen, the cloud is obvious around
+   a dense figure and nearly invisible around one thin line. That is not a defect
+   to tune away — it is why those photographs differ from each other so much. */
+void main() {
+  float l = texture(uSrc, vUv).a;
+  float h = 0.40 * textureLod(uSrc, vUv, 1.0).a
+          + 0.33 * texture(uNear, vUv).a
+          + 0.27 * texture(uWide, vUv).a;
+  float a = min(1.0, l + uMix * h);
+  outColour = vec4(uColour * a, a);
+}`;
+
+/* Blur one mip level before anything samples it, and this is not optional: a
+   single bilinear tap on a coarse level magnifies its texel lattice, and with a
+   thin trace that lattice is a string of beads — a few bright texels separated
+   by empty ones, each reconstructed as its own little dot. A 13-tap tent takes
+   the lattice out. It runs at the level's own resolution, so it is cheap. */
+const FRAG_BLUR = `#version 300 es
+precision highp float;
+in vec2 vUv;
+uniform sampler2D uSrc;
+uniform float uLod;              // which mip level to read
+uniform vec2 uStep;              // one texel of THAT level, in uv
+out vec4 outColour;
+void main() {
+  float c = textureLod(uSrc, vUv, uLod).a * 4.0;
+  float e = (textureLod(uSrc, vUv + vec2(uStep.x, 0.0), uLod).a
+           + textureLod(uSrc, vUv - vec2(uStep.x, 0.0), uLod).a
+           + textureLod(uSrc, vUv + vec2(0.0, uStep.y), uLod).a
+           + textureLod(uSrc, vUv - vec2(0.0, uStep.y), uLod).a) * 2.0;
+  float d = textureLod(uSrc, vUv + vec2(uStep.x, uStep.y), uLod).a
+          + textureLod(uSrc, vUv - vec2(uStep.x, uStep.y), uLod).a
+          + textureLod(uSrc, vUv + vec2(uStep.x, -uStep.y), uLod).a
+          + textureLod(uSrc, vUv - vec2(uStep.x, -uStep.y), uLod).a;
+  float o = textureLod(uSrc, vUv + vec2(uStep.x * 2.0, 0.0), uLod).a
+          + textureLod(uSrc, vUv - vec2(uStep.x * 2.0, 0.0), uLod).a
+          + textureLod(uSrc, vUv + vec2(0.0, uStep.y * 2.0), uLod).a
+          + textureLod(uSrc, vUv - vec2(0.0, uStep.y * 2.0), uLod).a;
+  outColour = vec4((c + e + d + o) / 20.0);
+}`;
+
+
+__exp.VERT_QUAD = VERT_QUAD;
+__exp.FRAG_DECAY = FRAG_DECAY;
+__exp.FRAG_COPY = FRAG_COPY;
+__exp.VERT_BEAM = VERT_BEAM;
+__exp.FRAG_BEAM = FRAG_BEAM;
+__exp.FRAG_TONE = FRAG_TONE;
+__exp.FRAG_HALO = FRAG_HALO;
+__exp.FRAG_BLUR = FRAG_BLUR;
+});
+
+/* ---- js/gl.js ------------------------------------------------------ */
+__define("js/gl.js", function (__exp, __req) {
+/* ============================================================================
+ *  gl.js — energy-accumulation renderer (WebGL2)
+ *
+ *  A real CRT's brightness is not a per-frame alpha: a phosphor integrates the
+ *  energy the beam deposits and then decays exponentially. This module renders
+ *  that directly, which is the model the Canvas-2D path only approximates:
+ *
+ *      E(x,y) += exposure · Σ_segments  1/v · spot(x,y)      (additive, per pixel)
+ *      E(x,y) *= exp(-dt/τ)                                  (真 decay, once per frame)
+ *      display = colour · (1 - exp(-E/E₀))                   (saturating tone map)
+ *
+ *  Three consequences the 8-bit path could not have:
+ *    · brightness ∝ 1/v holds exactly, because energy adds — no bucket ladder;
+ *    · deposits below 1/255 are not rounded away, so there is no quantisation
+ *      floor and therefore no "residue" to scrub;
+ *    · the tone map saturates smoothly instead of clipping, so overlapping
+ *      passes brighten and then stop, like a phosphor.
+ *
+ *  What it deliberately does NOT do: no blur, no bloom pass, and no widening
+ *  with the dose. The additive step happens on the pixel the beam actually hits,
+ *  spread only by the beam's own Gaussian spot, and that spot has ONE sigma for
+ *  every segment: on a real tube the spot size is set by the beam current and the
+ *  focus, not by how fast the beam happens to be moving at that sample. What
+ *  varies with writing speed is brightness per unit length, i.e. the energy
+ *  below. (Varying sigma with the dose was tried: adjacent samples have different
+ *  doses, so the trace came out beaded like a string of little dots.)
+ *
+ *  So brightness never bleeds into a pixel the beam did not illuminate, which is
+ *  what keeps "no glow" true even though the accumulation is additive. The halo
+ *  is opt-in and lives in a separate pass AFTER the tone map, because it is a
+ *  scatter of light the phosphor has already emitted — see FRAG_HALO.
+ *
+ *  Everything above is GPU-side; the CPU uploads one instance record per
+ *  segment (5 floats) and issues three draw calls per frame.
+ * ========================================================================== */
+
+const shaders = __req("js/shaders.js");
+
 const {
-  $,
-  BUCKETS,
-  FORMATTERS,
-  MAXN,
-  S,
-  TAU,
-  clamp,
+  FRAG_BEAM,
+  FRAG_BLUR,
+  FRAG_COPY,
+  FRAG_DECAY,
+  FRAG_HALO,
+  FRAG_TONE,
+  VERT_BEAM,
+  VERT_QUAD,
+} = shaders;
+
+const clamp01 = (v) => (v < 0 ? 0 : v > 1 ? 1 : v);
+
+function compile(gl, type, src) {
+  const s = gl.createShader(type);
+  gl.shaderSource(s, src);
+  gl.compileShader(s);
+  if (!gl.getShaderParameter(s, gl.COMPILE_STATUS)) {
+    const log = gl.getShaderInfoLog(s);
+    gl.deleteShader(s);
+    throw new Error(`shader: ${log}`);
+  }
+  return s;
+}
+
+function program(gl, vsSrc, fsSrc) {
+  const p = gl.createProgram();
+  const vs = compile(gl, gl.VERTEX_SHADER, vsSrc);
+  const fs = compile(gl, gl.FRAGMENT_SHADER, fsSrc);
+  gl.attachShader(p, vs);
+  gl.attachShader(p, fs);
+  gl.linkProgram(p);
+  gl.deleteShader(vs);
+  gl.deleteShader(fs);
+  if (!gl.getProgramParameter(p, gl.LINK_STATUS)) {
+    const log = gl.getProgramInfoLog(p);
+    gl.deleteProgram(p);
+    throw new Error(`link: ${log}`);
+  }
+  const uniforms = {};
+  for (let i = 0; i < gl.getProgramParameter(p, gl.ACTIVE_UNIFORMS); i++) {
+    const info = gl.getActiveUniform(p, i);
+    uniforms[info.name] = gl.getUniformLocation(p, info.name);
+  }
+  return { p, uniforms };
+}
+
+/** Does this machine actually render the energy path?
+ *
+ *  Asking for EXT_color_buffer_float is not enough: a driver can advertise it and
+ *  still discard every draw into a float target, which looks exactly like "the
+ *  scope stopped drawing" — an empty graticule and no trace. So this draws one
+ *  segment on a throwaway canvas, reads the frame back and requires light. The
+ *  real canvas is only committed to WebGL if that works, because a canvas hands
+ *  out one context kind for its whole life and there is no way back to 2D.
+ */
+function probeGL() {
+  let r = null;
+  let canvas = null;
+  try {
+    canvas = document.createElement('canvas');
+    canvas.width = 64;
+    canvas.height = 64;
+    r = createGL(canvas);
+    if (!r) return false;
+    r.resize(64, 64);
+    r.setColour(1, 1, 1);
+    r.setExposure(1);
+    r.setSigma(1.5);
+    r.setTau(1);
+    const seg = r.segData;
+    seg[0] = 10; seg[1] = 32; seg[2] = 54; seg[3] = 32; seg[4] = 1;
+    r.decay(1 / 60);
+    r.deposit(1);
+    r.present();
+    const px = r.readPixels(0, 0, 64, 64);
+    let lit = 0;
+    for (let i = 3; i < px.length; i += 4) if (px[i] > 0) lit++;
+    return lit > 0;
+  } catch (e) {
+    return false;
+  } finally {
+    if (r) r.dispose();
+  }
+}
+
+/** Create the renderer, or return null so the caller can stay on Canvas-2D.
+ *  WebGL2 only: WebGL1 would need instancing and float-render extensions, and
+ *  every browser this project targets has had WebGL2 for years. Failing to get a
+ *  float render target is a hard "no" — a 16-bit integer buffer would reintroduce
+ *  exactly the quantisation floor this is here to remove. */
+function createGL(canvas) {
+  let gl = null;
+  try {
+    gl = canvas.getContext('webgl2', {
+      alpha: true,
+      premultipliedAlpha: true,
+      antialias: false,
+      depth: false,
+      stencil: false,
+      preserveDrawingBuffer: false,
+      powerPreference: 'high-performance',
+    });
+  } catch (e) { /* no WebGL2 at all */ }
+  if (!gl) return null;
+  if (!gl.getExtension('EXT_color_buffer_float')) return null;
+
+  /* A lost context turns every draw into a no-op — the same silent blank screen
+     the probe exists to prevent, except it can happen long after startup. There
+     is no way back to a 2D context on this canvas, so the honest thing is to say
+     so rather than look broken. Restoring the GPU resources in place is not
+     implemented; the app keeps running and the user reloads. */
+  canvas.addEventListener('webglcontextlost', (e) => {
+    e.preventDefault();
+    state.lost = true;
+  }, false);
+
+  let progDecay, progCopy, progBeam, progTone, progHalo, progBlur;
+  try {
+    progDecay = program(gl, VERT_QUAD, FRAG_DECAY);
+    progCopy = program(gl, VERT_QUAD, FRAG_COPY);
+    progBeam = program(gl, VERT_BEAM, FRAG_BEAM);
+    progTone = program(gl, VERT_QUAD, FRAG_TONE);
+    progHalo = program(gl, VERT_QUAD, FRAG_HALO);
+    progBlur = program(gl, VERT_QUAD, FRAG_BLUR);
+  } catch (e) {
+    return null;                                  // shader trouble: fall back
+  }
+
+  const quad = gl.createBuffer();
+  gl.bindBuffer(gl.ARRAY_BUFFER, quad);
+  gl.bufferData(gl.ARRAY_BUFFER,
+    new Float32Array([-1, -1, 1, -1, 1, 1, -1, -1, 1, 1, -1, 1]), gl.STATIC_DRAW);
+
+  const MAX_SEG = 32768;
+  const segBuf = gl.createBuffer();
+  const segData = new Float32Array(MAX_SEG * 5);   // x0,y0,x1,y1,energy
+  gl.bindBuffer(gl.ARRAY_BUFFER, segBuf);
+  gl.bufferData(gl.ARRAY_BUFFER, segData.byteLength, gl.DYNAMIC_DRAW);
+
+  const target = { tex: null, fbo: null, w: 0, h: 0 };
+  const display = { tex: null, fbo: null, w: 0, h: 0 };
+  const scratch = { tex: null, fbo: null, w: 0, h: 0 };
+  const haloIn = { tex: null, fbo: null, w: 0, h: 0 };
+  const haloNear = { tex: null, fbo: null, w: 0, h: 0 };
+  const haloWide = { tex: null, fbo: null, w: 0, h: 0 };
+
+  /** Allocate without destroying anything: a resize has to COPY the old
+   *  accumulation first, and deleting it up front is how the picture got wiped
+   *  (the console said `tex is already deleted`). */
+  function allocTexture(w, h, internal, format, type, mip) {
+    const tex = gl.createTexture();
+    gl.bindTexture(gl.TEXTURE_2D, tex);
+    gl.texImage2D(gl.TEXTURE_2D, 0, internal, w, h, 0, format, type, null);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER,
+      mip ? gl.LINEAR_MIPMAP_LINEAR : gl.LINEAR);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+    const fbo = gl.createFramebuffer();
+    gl.bindFramebuffer(gl.FRAMEBUFFER, fbo);
+    gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, tex, 0);
+    /* Asking for the extension is not the same as the driver being able to render
+       to a float target. If the framebuffer is incomplete every draw is silently
+       discarded, which looks exactly like "the scope stopped drawing". */
+    const status = gl.checkFramebufferStatus(gl.FRAMEBUFFER);
+    if (status !== gl.FRAMEBUFFER_COMPLETE) {
+      gl.deleteFramebuffer(fbo);
+      gl.deleteTexture(tex);
+      throw new Error(`float render target incomplete (0x${status.toString(16)})`);
+    }
+    gl.bindFramebuffer(gl.FRAMEBUFFER, fbo);
+    gl.clearColor(0, 0, 0, 1);
+    gl.clear(gl.COLOR_BUFFER_BIT);        // also avoids the lazy-init warning
+    return { tex, fbo, w, h };
+  }
+
+  function adopt(t, next) {
+    if (t.tex) gl.deleteTexture(t.tex);
+    if (t.fbo) gl.deleteFramebuffer(t.fbo);
+    t.tex = next.tex;
+    t.fbo = next.fbo;
+    t.w = next.w;
+    t.h = next.h;
+  }
+
+  const makeTarget = (w, h) => allocTexture(w, h, gl.RGBA16F, gl.RGBA, gl.HALF_FLOAT);
+  const makeDisplay = (w, h) => allocTexture(w, h, gl.RGBA8, gl.RGBA, gl.UNSIGNED_BYTE);
+  /* Only allocated when 光晕 is first switched on: with it off the render path is
+     byte for byte what it was, one full-screen pass cheaper. */
+  const makeHaloSrc = (w, h) => allocTexture(w, h, gl.RGBA8, gl.RGBA, gl.UNSIGNED_BYTE, true);
+  const makeHaloBlur = (w, h) => allocTexture(w, h, gl.RGBA8, gl.RGBA, gl.UNSIGNED_BYTE);
+
+  const state = {
+    ok: true,
+    width: 0,
+    height: 0,
+    colour: [0.24, 1.0, 0.61],
+    exposure: 0.45,        // per unit 1/v, per frame
+    e0: 1,                 // energy that tone-maps to ~63% brightness
+    sigma: 1.0,            // beam spot sigma, in device pixels
+    halo: 0,               // halation amplitude (0 = pass skipped)
+    tau: 0.02,             // phosphor time constant, seconds
+    segments: 0,
+    lost: false,
+    /** Frame-time bookkeeping, so a stalled tab decays by real time rather than
+     *  by "one step". */
+    last: 0,
+    frames: 0,
+  };
+
+  function bindQuad(prog, loc) {
+    gl.bindBuffer(gl.ARRAY_BUFFER, quad);
+    gl.enableVertexAttribArray(loc);
+    gl.vertexAttribPointer(loc, 2, gl.FLOAT, false, 0, 0);
+    /* Dividers are per attribute LOCATION and outlive the program that set them,
+       so a fullscreen pass can inherit divisor 1 from the instanced beam pass —
+       which turns its six vertices into one value and draws garbage. */
+    gl.vertexAttribDivisor(loc, 0);
+  }
+
+  /** Copy the previous accumulation into a fresh target, scaled — a resize must
+   *  not eat the picture (the Canvas path had to do the same by hand). */
+  function resize(w, h) {
+    if (w < 1 || h < 1) return;
+    if (target.w === w && target.h === h) return;
+    const hadContent = !!target.tex;
+    const next = makeTarget(w, h);
+    const nextDisplay = makeDisplay(w, h);
+    if (hadContent) {
+      gl.bindFramebuffer(gl.FRAMEBUFFER, next.fbo);
+      gl.viewport(0, 0, w, h);
+      gl.disable(gl.BLEND);
+      gl.useProgram(progCopy.p);
+      gl.activeTexture(gl.TEXTURE0);
+      gl.bindTexture(gl.TEXTURE_2D, target.tex);      // the OLD one, still alive
+      gl.uniform1i(progCopy.uniforms.uAcc, 0);
+      bindQuad(progCopy, gl.getAttribLocation(progCopy.p, 'aPos'));
+      gl.drawArrays(gl.TRIANGLES, 0, 6);
+    }
+    adopt(target, next);                                 // frees the old, after the copy
+    adopt(display, nextDisplay);
+    if (scratch.tex && (scratch.w !== w || scratch.h !== h)) adopt(scratch, makeTarget(w, h));
+    if (haloIn.tex && (haloIn.w !== w || haloIn.h !== h)) adopt(haloIn, makeHaloSrc(w, h));
+    if (haloNear.tex && (haloNear.w !== w || haloNear.h !== h)) adopt(haloNear, makeHaloBlur(w, h));
+    if (haloWide.tex && (haloWide.w !== w || haloWide.h !== h)) adopt(haloWide, makeHaloBlur(w, h));
+    state.width = w;
+    state.height = h;
+  }
+
+  function clear() {
+    if (!target.fbo) return;
+    gl.bindFramebuffer(gl.FRAMEBUFFER, target.fbo);
+    gl.viewport(0, 0, target.w, target.h);
+    gl.clearColor(0, 0, 0, 1);
+    gl.clear(gl.COLOR_BUFFER_BIT);
+  }
+
+  /** One frame's worth of phosphor decay, by real elapsed time. */
+  function decay(dt) {
+    if (!scratch.tex || scratch.w !== target.w || scratch.h !== target.h) {
+      adopt(scratch, makeTarget(target.w, target.h));
+    }
+    const keep = state.tau > 0 ? Math.exp(-dt / state.tau) : 0;
+    gl.bindFramebuffer(gl.FRAMEBUFFER, scratch.fbo);
+    gl.viewport(0, 0, target.w, target.h);
+    gl.disable(gl.BLEND);
+    gl.useProgram(progDecay.p);
+    gl.activeTexture(gl.TEXTURE0);
+    gl.bindTexture(gl.TEXTURE_2D, target.tex);
+    gl.uniform1i(progDecay.uniforms.uAcc, 0);
+    gl.uniform1f(progDecay.uniforms.uKeep, keep);
+    bindQuad(progDecay, gl.getAttribLocation(progDecay.p, 'aPos'));
+    gl.drawArrays(gl.TRIANGLES, 0, 6);
+
+    const t = target.tex; target.tex = scratch.tex; scratch.tex = t;
+    const f = target.fbo; target.fbo = scratch.fbo; scratch.fbo = f;
+    const w = target.w; target.w = scratch.w; scratch.w = w;
+    const h = target.h; target.h = scratch.h; scratch.h = h;
+  }
+
+  /** Add this frame's beam energy. `n` segments of 5 floats: x0,y0,x1,y1,energy. */
+  function deposit(n) {
+    if (!n) return;
+    state.segments = n;
+    gl.bindBuffer(gl.ARRAY_BUFFER, segBuf);
+    gl.bufferSubData(gl.ARRAY_BUFFER, 0, segData, 0, n * 5);
+
+    gl.bindFramebuffer(gl.FRAMEBUFFER, target.fbo);
+    gl.viewport(0, 0, target.w, target.h);
+    gl.useProgram(progBeam.p);
+    const stride = 5 * 4;
+    const p0 = gl.getAttribLocation(progBeam.p, 'aP0');
+    const p1 = gl.getAttribLocation(progBeam.p, 'aP1');
+    const en = gl.getAttribLocation(progBeam.p, 'aEnergy');
+    gl.enableVertexAttribArray(p0);
+    gl.vertexAttribPointer(p0, 2, gl.FLOAT, false, stride, 0);
+    gl.vertexAttribDivisor(p0, 1);
+    gl.enableVertexAttribArray(p1);
+    gl.vertexAttribPointer(p1, 2, gl.FLOAT, false, stride, 8);
+    gl.vertexAttribDivisor(p1, 1);
+    gl.enableVertexAttribArray(en);
+    gl.vertexAttribPointer(en, 1, gl.FLOAT, false, stride, 16);
+    gl.vertexAttribDivisor(en, 1);
+
+    bindQuad(progBeam, gl.getAttribLocation(progBeam.p, 'aCorner'));
+    gl.uniform2f(progBeam.uniforms.uViewport, target.w, target.h);
+    gl.uniform1f(progBeam.uniforms.uHalfWidth, state.sigma);
+    gl.uniform1f(progBeam.uniforms.uExposure, state.exposure);
+
+    gl.enable(gl.BLEND);
+    gl.blendFunc(gl.ONE, gl.ONE);        // energy ADDS — this is the model
+    gl.drawArraysInstanced(gl.TRIANGLES, 0, 6, n);
+    gl.disable(gl.BLEND);
+  }
+
+  /** Tone-map the energy buffer into `dest`. */
+  function toneMap(dest) {
+    gl.bindFramebuffer(gl.FRAMEBUFFER, dest.fbo);
+    gl.viewport(0, 0, dest.w, dest.h);
+    gl.disable(gl.BLEND);
+    gl.useProgram(progTone.p);
+    gl.activeTexture(gl.TEXTURE0);
+    gl.bindTexture(gl.TEXTURE_2D, target.tex);
+    gl.uniform1i(progTone.uniforms.uAcc, 0);
+    gl.uniform3f(progTone.uniforms.uColour, state.colour[0], state.colour[1], state.colour[2]);
+    gl.uniform1f(progTone.uniforms.uE0, state.e0);
+    bindQuad(progTone, gl.getAttribLocation(progTone.p, 'aPos'));
+    gl.drawArrays(gl.TRIANGLES, 0, 6);
+  }
+
+  /** Blur one mip level of `from` into a target of that level's own size. */
+  function blurLevel(from, into, lod) {
+    if (!into.tex || into.w !== Math.max(1, from.w >> lod) || into.h !== Math.max(1, from.h >> lod)) {
+      adopt(into, makeHaloBlur(Math.max(1, from.w >> lod), Math.max(1, from.h >> lod)));
+    }
+    gl.bindFramebuffer(gl.FRAMEBUFFER, into.fbo);
+    gl.viewport(0, 0, into.w, into.h);
+    gl.disable(gl.BLEND);
+    gl.useProgram(progBlur.p);
+    gl.activeTexture(gl.TEXTURE0);
+    gl.bindTexture(gl.TEXTURE_2D, from.tex);
+    gl.uniform1i(progBlur.uniforms.uSrc, 0);
+    gl.uniform1f(progBlur.uniforms.uLod, lod);
+    gl.uniform2f(progBlur.uniforms.uStep, 1 / Math.max(1, from.w >> lod), 1 / Math.max(1, from.h >> lod));
+    bindQuad(progBlur, gl.getAttribLocation(progBlur.p, 'aPos'));
+    gl.drawArrays(gl.TRIANGLES, 0, 6);
+  }
+
+  /** Add the halation cloud on top of the tone-mapped frame. */
+  function addHalo(from) {
+    blurLevel(from, haloNear, 4);
+    blurLevel(from, haloWide, 6);
+    gl.bindFramebuffer(gl.FRAMEBUFFER, display.fbo);
+    gl.viewport(0, 0, display.w, display.h);
+    gl.disable(gl.BLEND);
+    gl.useProgram(progHalo.p);
+    gl.activeTexture(gl.TEXTURE0);
+    gl.bindTexture(gl.TEXTURE_2D, from.tex);
+    gl.uniform1i(progHalo.uniforms.uSrc, 0);
+    gl.activeTexture(gl.TEXTURE1);
+    gl.bindTexture(gl.TEXTURE_2D, haloNear.tex);
+    gl.uniform1i(progHalo.uniforms.uNear, 1);
+    gl.activeTexture(gl.TEXTURE2);
+    gl.bindTexture(gl.TEXTURE_2D, haloWide.tex);
+    gl.uniform1i(progHalo.uniforms.uWide, 2);
+    gl.uniform3f(progHalo.uniforms.uColour, state.colour[0], state.colour[1], state.colour[2]);
+    gl.uniform1f(progHalo.uniforms.uMix, state.halo);
+    bindQuad(progHalo, gl.getAttribLocation(progHalo.p, 'aPos'));
+    gl.drawArrays(gl.TRIANGLES, 0, 6);
+  }
+
+  /** Tone-map the energy buffer to the display target, then blit it to the
+   *  canvas. The display target exists so a test can read the frame back at any
+   *  time without preserveDrawingBuffer. With 光晕 on, the tone map goes to a
+   *  scratch instead so the halo pass has a luminance texture to scatter. */
+  function present() {
+    if (state.halo > 0) {
+      if (!haloIn.tex || haloIn.w !== display.w || haloIn.h !== display.h) {
+        adopt(haloIn, makeHaloSrc(display.w, display.h));
+      }
+      toneMap(haloIn);
+      gl.bindTexture(gl.TEXTURE_2D, haloIn.tex);
+      gl.generateMipmap(gl.TEXTURE_2D);
+      addHalo(haloIn);
+    } else {
+      toneMap(display);
+    }
+
+    gl.bindFramebuffer(gl.READ_FRAMEBUFFER, display.fbo);
+    gl.bindFramebuffer(gl.DRAW_FRAMEBUFFER, null);
+    gl.blitFramebuffer(0, 0, display.w, display.h, 0, 0, display.w, display.h,
+      gl.COLOR_BUFFER_BIT, gl.NEAREST);
+    state.frames++;
+  }
+
+  /** The frame as RGBA bytes — the same shape a 2D canvas would give, so the
+   *  caller does not have to care which renderer is running. */
+  function readPixels(x, y, w, h, out) {
+    const buf = out || new Uint8Array(w * h * 4);
+    gl.bindFramebuffer(gl.FRAMEBUFFER, display.fbo);
+    gl.readPixels(x, display.h - y - h, w, h, gl.RGBA, gl.UNSIGNED_BYTE, buf);
+    return buf;
+  }
+
+  return {
+    state,
+    resize,
+    clear,
+    decay,
+    deposit,
+    present,
+    readPixels,
+    /** Segment scratch, exposed so the caller fills it without a copy. */
+    segData,
+    maxSegments: MAX_SEG,
+    setColour(r, g, b) { state.colour = [r, g, b]; },
+    setExposure(v) { state.exposure = v; },
+    setSigma(v) { state.sigma = Math.max(0.5, v); },
+    setTau(v) { state.tau = Math.max(0, v); },
+    setHalo(v) { state.halo = clamp01(v); },
+    dispose() {
+      for (const t of [target, display, scratch, haloIn, haloNear, haloWide]) {
+        if (t.tex) gl.deleteTexture(t.tex);
+        if (t.fbo) gl.deleteFramebuffer(t.fbo);
+      }
+      gl.getExtension('WEBGL_lose_context')?.loseContext();
+    },
+  };
+}
+
+__exp.probeGL = probeGL;
+__exp.createGL = createGL;
+});
+
+/* ---- js/perf.js ---------------------------------------------------- */
+__define("js/perf.js", function (__exp, __req) {
+/* ============================================================================
+ *  perf.js — what the renderer measures about itself
+ *
+ *    · WORK_*  how long the render call takes — the quality governor's input;
+ *    · FL_*    frame INTERVALS, each with the context that produced it, because
+ *              a median hides a hitch and the 1 % / 0.1 % low does not;
+ *    · a watchdog for audio dropouts, which fire no DOM event at all.
+ *
+ *  Nothing here draws, and nothing here is on the hot path: recording a frame is
+ *  a few array writes, and the percentiles are only computed when asked for.
+ * ========================================================================== */
+
+const audio = __req("js/audio.js");
+const core = __req("js/core.js");
+
+const {
   dom,
-  flags,
-  winSize,
 } = core;
-
-const bctx = dom.bg.getContext('2d');
-const nctx = dom.burnin.getContext('2d');   // burn-in layer
-const tctx = dom.trace.getContext('2d');
-
-/* --------------------------------------------------------------- geometry */
-
-let W = 0, H = 0, DPR = 1;          // canvas size, in device pixels
-let PLOT = 0, PLOT_X = 0, PLOT_Y = 0; // square plotting area (keeps circles round)
-
-/* Adaptive resolution. Canvas cost scales with pixel count, so on a slow
-   machine the cheapest big win is to render fewer pixels and let the browser
-   upscale. autoScale drops (and recovers) in 1/8 steps based on measured
-   render time; it never goes below 0.5. */
-const SCALE_MIN = 0.5;
-let autoScale = 1;
-let workAvg = 0;            // ms spent inside the render section, smoothed
-let workP50 = 0;            // median of the rolling window
-let qualityCooldown = 0;
-let workStatCountdown = 30;
 
 /* Rolling window of per-frame render times.
 
@@ -1576,6 +2259,132 @@ const WORK_RING = new Float32Array(120);
 const WORK_SORT = new Float32Array(120);
 let workPos = 0;
 let workFilled = 0;
+
+/* ---- frame log -----------------------------------------------------------
+   A rolling window of frame INTERVALS, with the two things that can make one
+   long: how many segments were deposited, and whether the halation passes ran.
+   The median never shows a hitch — 1 % / 0.1 % low does, which is what a
+   benchmark reports and what a hitch feels like. Read it with `__scope.perf()`
+   or by clicking the 画质 badge; the output is plain text made for copy-paste,
+   so nobody has to record a profiler again. */
+const FL_N = 8192;      // ~2.3 min at 60 fps: long enough to report it afterwards
+const flIv = new Float32Array(FL_N);     // ms between rAF ticks
+const flSeg = new Int32Array(FL_N);      // segments deposited by that frame
+const flHalo = new Uint8Array(FL_N);     // halation passes were running
+const flScale = new Uint8Array(FL_N);    // canvas was resized during it
+const flT = new Float64Array(FL_N);      // when that frame ended
+const flEvents = [];                     // {t, what}
+let flAt = 0, flFilled = 0, flPrev = 0;
+let flLastSeg = 0, flLastHalo = 0, flResized = false;
+
+function noteEvent(what) {
+  flEvents.push({ t: performance.now(), what: String(what) });
+  if (flEvents.length > 200) flEvents.shift();
+}
+
+/* ---- the audio watchdog --------------------------------------------------
+   A dropout caused by the audio thread missing its deadline fires NO DOM event:
+   the element still says it is playing, no `waiting`, no `error`, and the renderer
+   keeps painting — there is simply silence, and if nothing is playing there is
+   nothing to paint either. That is the reported symptom, and it cannot be caught
+   by listening to events.
+
+   What does move is the AUDIO CLOCK: `AudioContext.currentTime` only advances
+   while the graph is actually being rendered, so wall-clock progress minus
+   audio-clock progress IS the dropout, in milliseconds. Log it, together with
+   silence while supposedly playing and the element's own state.
+
+   Also timestamped here: page lifecycle (a frozen/backgrounded tab is a prime
+   suspect), the context state, and Firefox's own long-task entries when it
+   supports them. */
+let lastClock = 0, lastClockWall = 0, ctxState = '', silentMs = 0;
+let peakL = 0, peakR = 0;                 // the last drawn frame's channel peaks
+function watchAudio(now) {
+  const st = audio.status();
+  if (st.contextState !== ctxState) {
+    noteEvent(`音频上下文 ${ctxState || '(未建)'} → ${st.contextState}`);
+    ctxState = st.contextState;
+  }
+  const el = dom.audio;
+  const live = !el.paused && !el.ended && st.contextState === 'running';
+  if (lastClock && st.clockMs) {
+    const dClock = st.clockMs - lastClock;
+    const dWall = now - lastClockWall;
+    /* A track at a different sample rate gets a NEW AudioContext and the clock
+       restarts at zero. That is not a dropout, and reporting it as "落后 356 s"
+       (the first real capture did exactly that) is the instrument lying. */
+    if (dClock < -100) noteEvent('音频上下文重建（换采样率，时钟归零）');
+    const slip = dWall - dClock;
+    if (dClock >= -100 && live && slip > 40) {
+      const buffered = el.buffered.length ? el.buffered.end(el.buffered.length - 1) - el.currentTime : 0;
+      noteEvent(`音频时钟落后 ${Math.round(slip)} ms · 静默 ${Math.round(silentMs)} ms · readyState ${el.readyState} · 缓冲 ${buffered.toFixed(1)}s`);
+    }
+  }
+  if (st.clockMs) { lastClock = st.clockMs; lastClockWall = now; }
+  const quiet = live && peakL < 1e-4 && peakR < 1e-4;
+  silentMs = quiet ? silentMs + 100 : 0;
+  if (silentMs === 1200) noteEvent(`信号静默 1.2 s(在播放但分析器全 0)· readyState ${el.readyState}`);
+}
+
+function recordFrame(now) {
+  const iv = flPrev ? now - flPrev : 0;
+  flPrev = now;
+  if (iv <= 0 || iv > 5000) return;
+  flIv[flAt] = iv; flSeg[flAt] = flLastSeg;
+  flHalo[flAt] = flLastHalo; flScale[flAt] = flResized ? 1 : 0;
+  flT[flAt] = now;
+  flResized = false;
+  flAt = (flAt + 1) % FL_N;
+  if (flFilled < FL_N) flFilled++;
+}
+
+/** The frame log as text. `seconds` limits it to the recent past. */
+function perfLog(seconds = 0) {
+  if (!flFilled) return '帧日志:还没有数据';
+  const pick = [];
+  let span = 0;
+  for (let k = 0; k < flFilled; k++) {
+    const i = (flAt - 1 - k + FL_N) % FL_N;
+    pick.push(i); span += flIv[i];
+    if (seconds && span >= seconds * 1000) break;
+  }
+  const iv = pick.map((i) => flIv[i]).sort((a, b) => a - b);
+  const q = (p) => iv[Math.min(iv.length - 1, Math.floor(p * (iv.length - 1)))];
+  const low = (f) => {
+    const k = Math.max(1, Math.round(iv.length * f));
+    let sum = 0;
+    for (let i = iv.length - k; i < iv.length; i++) sum += iv[i];
+    return 1000 / (sum / k);
+  };
+  const over = (t) => iv.filter((x) => x > t).length;
+  /* Frames the browser itself stretched (hidden tab → rAF throttled to ~1 Hz, so
+     its intervals are whole seconds). Counting them in the 1 % low makes the app
+     look terrible for something it did not do — the first real capture's "0.1 %
+     low 0.7 fps" was nine of these and nothing else. */
+  const stretched = pick.filter((i) => flIv[i] > 900).length;
+  const honest = pick.filter((i) => flIv[i] <= 900).map((i) => flIv[i]).sort((a, b) => a - b);
+  const hq = (pp) => (honest.length ? honest[Math.min(honest.length - 1, Math.floor(pp * (honest.length - 1)))] : 0);
+  const worst = pick.slice().sort((a, b) => flIv[b] - flIv[a]).slice(0, 6);
+  const now = performance.now();
+  const lines = [
+    `帧日志:${(span / 1000).toFixed(1)}s / ${iv.length} 帧`,
+    `  中位 ${q(0.5).toFixed(2)} ms (${(1000 / q(0.5)).toFixed(1)} fps) · p90 ${q(0.9).toFixed(2)} · p99 ${q(0.99).toFixed(2)} · p99.9 ${q(0.999).toFixed(2)} · 最差 ${iv[iv.length - 1].toFixed(1)} ms`,
+    `  1% low ${low(0.01).toFixed(1)} fps · 0.1% low ${low(0.001).toFixed(1)} fps${stretched ? `（其中 ${stretched} 帧是浏览器把隐藏标签页的 rAF 拉长到整秒，见「可见性」事件）` : ''}`,
+    stretched ? `  去掉被拉长的帧后:中位 ${hq(0.5).toFixed(2)} ms · p99 ${hq(0.99).toFixed(2)} · 最差 ${honest[honest.length - 1].toFixed(1)} ms` : '',
+    `  超 20/33/50 ms 的帧:${over(20)} / ${over(33)} / ${over(50)}`,
+    '  最差的几帧:',
+  ];
+  for (const i of worst) {
+    lines.push(`    ${((flT[i] - now) / 1000).toFixed(1)}s  ${flIv[i].toFixed(1)} ms (${(1000 / flIv[i]).toFixed(1)} fps) · ${flSeg[i]} 段 · 光晕${flHalo[i] ? '开' : '关'}${flScale[i] ? ' · 该帧前刚 resize' : ''}`);
+  }
+  if (flEvents.length) {
+    lines.push('  事件(负号 = 多少秒前):');
+    for (const e of flEvents.slice(-14)) lines.push(`    ${((e.t - now) / 1000).toFixed(1)}s  ${e.what}`);
+  }
+  const text = lines.filter(Boolean).join('\n');
+  console.log(text);
+  return text;
+}
 
 function recordWork(ms) {
   WORK_RING[workPos] = ms;
@@ -1612,6 +2421,547 @@ function workTrimmed(q) {
   for (let i = 0; i < n; i++) s += a[i];
   return s / n;
 }
+
+
+/** The context of the frame that was just drawn (its interval is recorded at
+    the top of the next tick, where the interval is actually known). */
+function setContext(segs, halo) { flLastSeg = segs; flLastHalo = halo; }
+function setPeaks(l, r) { peakL = l; peakR = r; }
+/** A canvas resize is a prime suspect for a hitch: mark the next frame. */
+function noteResize(w, h, dpr) { flResized = true; noteEvent(`resize ${w}×${h} @${dpr}x`); }
+const workFilledCount = () => workFilled;
+
+/* On its OWN TIMER, not on rAF: a hidden tab throttles rAF to about 1 Hz, and
+   that is precisely the state in which a multi-second audio dropout would go
+   unnoticed — which is what the first real capture showed. Timer callbacks keep
+   firing (throttled, but firing) in a hidden tab. */
+setInterval(() => watchAudio(performance.now()), 250);
+
+/* Page lifecycle and long tasks: a frozen tab or a 200 ms task explains a stall
+   that the frame log would otherwise only show as a number. */
+for (const ev of ['freeze', 'resume', 'pagehide', 'pageshow']) {
+  document.addEventListener(ev, () => noteEvent(`页面 ${ev}`));
+}
+document.addEventListener('visibilitychange', () => noteEvent(`可见性 ${document.visibilityState}`));
+try {
+  new PerformanceObserver((list) => {
+    for (const e of list.getEntries()) noteEvent(`长任务 ${Math.round(e.duration)} ms`);
+  }).observe({ entryTypes: ['longtask'] });
+} catch (e) { /* Firefox without the longtask entry type */ }
+
+
+__exp.setContext = setContext;
+__exp.setPeaks = setPeaks;
+__exp.noteResize = noteResize;
+__exp.workFilledCount = workFilledCount;
+__exp.noteEvent = noteEvent;
+__exp.perfLog = perfLog;
+__exp.recordFrame = recordFrame;
+__exp.recordWork = recordWork;
+__exp.resetWorkStats = resetWorkStats;
+__exp.workSorted = workSorted;
+__exp.workStat = workStat;
+__exp.workTrimmed = workTrimmed;
+});
+
+/* ---- js/trace.js --------------------------------------------------- */
+__define("js/trace.js", function (__exp, __req) {
+/* ============================================================================
+ *  trace.js — the beam: samples to pixels, and pixels to light
+ *
+ *  This is the only module that knows the shape of a trace: one pass maps the
+ *  two channels to device pixels while measuring the per-sample step, a second
+ *  deposits the (dose-smoothed) 1/v energy — additively into the float buffer on
+ *  the WebGL path, into a ten-rung alpha ladder on the 8-bit one.
+ *
+ *  The geometry (plot rectangle, DPR) and the renderer handle are installed by
+ *  render.js with setTarget(), so this module never reaches back into it.
+ * ========================================================================== */
+
+const core = __req("js/core.js");
+
+const {
+  BUCKETS,
+  MAXN,
+  S,
+  TAU,
+  clamp,
+  flags,
+} = core;
+
+/** Installed by render.js after layout(). */
+const T = { gl: null, ctx: null, dpr: 1, w: 0, h: 0, plot: 0, plotX: 0, plotY: 0 };
+function setTarget(t) {
+  T.gl = t.gl; T.ctx = t.ctx; T.dpr = t.dpr; T.w = t.w; T.h = t.h;
+  T.plot = t.plot; T.plotX = t.plotX; T.plotY = t.plotY;
+}
+
+const PX = new Float32Array(MAXN);
+const PY = new Float32Array(MAXN);
+const SEGR = new Float32Array(MAXN);   // raw per-sample step, in pixels
+/* Segment indices grouped by brightness bucket. Building these in the same
+   pass that maps samples to pixels means the whole trace is produced with
+   ONE pass over the samples plus one canvas op per drawn segment, instead of
+   one full scan per brightness level. */
+const BUCKET_IDX = new Int32Array(BUCKETS * MAXN);
+const BUCKET_N = new Int32Array(BUCKETS);
+
+let refSpeed = 0;        // smoothed mean beam speed, the 1/v blanking reference
+let agGain = 1;          // auto-gain (applied to BOTH axes to keep the figure's shape)
+let monoCounter = 0;
+let monoLike = false;
+let lastPeakL = 0;       // previous frame's peaks — auto-gain is smoothed anyway
+let lastPeakR = 0;
+let lastDoseMax = 1;     // largest 1/v dose of the last frame (1 = the mean beam speed)
+
+/* ---- energy-model parameters (WebGL path) ------------------------------
+   The Canvas path fades with a per-frame alpha a(p); the energy path decays with
+   a time constant. τ = -dt/ln(1-a) is the time constant that decays at the same
+   rate, so the 余辉 slider keeps its meaning across both renderers instead of
+   needing a second set of numbers. */
+function tauFor(p) {
+  const a = Math.pow(1 - clamp(p / 100, 0, 1), 2) * 0.97 + 0.03;
+  if (a >= 1) return 0;                       // 0 % = no accumulation at all
+  return Math.min(2, -1 / 60 / Math.log(1 - a));
+}
+
+/** Beam spot sigma in device pixels. The Canvas path strokes a line of width
+ *  lineWidth; a Gaussian of sigma = w/2 has the same apparent thickness. */
+function sigmaFor(lw) { return Math.max(0.5, lw * T.dpr * 0.5); }
+
+/* ---- the halo: halation, the cloud the emitted light makes ----------------
+   Applied to the tone-mapped frame, not to the energy, because the scatter
+   happens to light the phosphor has ALREADY emitted: its input is bounded and
+   its output can never exceed this amplitude. Two earlier attempts got this
+   wrong in instructive ways.
+
+   Doing it in the energy buffer made the halo a wider beam spot. Wrong on the
+   physics (the spot is set by the beam current, not by the writing speed) and
+   wrong on the screen: a dwell deposits thousands of times what saturates the
+   tone map, so the halo term saturated out to its own cutoff and the "glow"
+   ended in a cliff — a flat disc with a hard edge.
+
+   Making sigma vary per segment also beaded the trace like a string of dots,
+   because adjacent samples have different doses and therefore different widths.
+   The round flare at a stroke end in the reference photos is not a wider spot at
+   all: it is the cloud around a bright point.
+
+   The slider runs the amplitude all the way to 0.9 because the two reference
+   cases are far apart: around a dense figure the wide taps already average 20-40
+   % of full brightness and the cloud is obvious, while around a single thin
+   stroke the same taps average a few percent and no amplitude short of this makes
+   it read at all. 光晕 is the knob for which of those you are looking at. */
+const HALO_CLOUD = 0.9;
+function haloMix() {
+  if (!S.halo) return 0;
+  // Curved, because the cloud is a convolution of what is already on screen: on
+  // a dense figure it is obvious by 40 % and by 100 % it has washed the trace
+  // out. h^1.5 keeps the whole slider usable instead of saturating halfway.
+  return HALO_CLOUD * Math.pow(clamp(S.halo / 100, 0, 1), 1.5);
+}
+
+/** Energy deposited per unit of 1/v, per frame. The constant is measured, not
+ *  chosen: sweeping it on the busiest passage of a line-type track and counting
+ *  how much ink the tone map blows out gives 0.05→0 %, 0.13→0.06 %, 0.17→0.9 %,
+ *  0.25→3.6 %. 0.9 % at the default intensity is the same operating point the
+ *  8-bit path was calibrated to (0.66 % there), so the two renderers agree about
+ *  what "not blown out" means. */
+function exposureFor(intensity) { return intensity * 0.19; }
+
+function fadeAlpha() {
+  // 0 %  -> 1.0  (full clear every frame, zero afterglow)
+  // 100% -> 0.03 (long phosphor-like tail)
+  const p = clamp(S.persistence / 100, 0, 1);
+  return Math.pow(1 - p, 2) * 0.97 + 0.03;
+}
+
+/** Erase a layer by `alpha` — pure subtraction, never addition. */
+function fadeLayer(ctx, alpha) {
+  ctx.setTransform(1, 0, 0, 1, 0, 0);
+  ctx.globalAlpha = 1;
+  ctx.globalCompositeOperation = 'destination-out';
+  ctx.fillStyle = `rgba(0,0,0,${alpha})`;
+  ctx.fillRect(0, 0, T.w, T.h);
+  ctx.globalCompositeOperation = 'source-over';
+}
+
+/* ---- the 8-bit quantisation floor (the "residue" slider) --------------
+   destination-out multiplies alpha: n <- n*(1-a). With round-to-nearest
+   8-bit storage, every n <= 1/(2a) is a FIXED POINT and never decays. So a
+   slow fade (high 余辉) does not leave a longer ghost, it leaves a BRIGHTER
+   one — at 100% the floor is alpha ~15, clearly visible, and the whole region
+   the beam has ever swept keeps it forever.
+
+   A periodic strong scrub is the only way out: a step of 1.0 clears the floor
+   completely, and anything weaker leaves a predictable amount of it behind.
+   Hence one slider, expressed as the residue you are willing to keep.
+*/
+/* The ten alpha rungs are the 8-bit path's whole brightness range, and they have
+   to cover the same 1/v ratio the energy path does. Mapping the dose straight
+   onto them puts an ordinary segment on rung 5 of 9 at alpha 0.5·base instead of
+   the 0.44·base this path was calibrated at, and its afterglow accumulates, so
+   the picture drifts brighter. Scaling the rungs by this keeps the operating
+   point and spends the extra headroom on the slow strokes — which is where the
+   dashes are. */
+const BUCKET_ALPHA = 0.8;
+const SCRUB_EVERY = 180;   // frames (~3 s, longer than any visible trail)
+let scrubTick = 0;
+
+function scrubAlpha() {
+  const r = clamp(S.residue / 100, 0, 1);
+  if (r <= 0) return 1;                     // off -> wipe the floor completely
+  return Math.min(1, 3.125 / (r * 100));    // leaves a floor of roughly 16*r
+}
+
+/** The 8-bit path's erase step, once per frame. Every SCRUB_EVERY frames it
+    wipes the quantisation floor instead of fading — see scrubAlpha. A pause asks
+    for that wipe immediately so the frozen picture does not keep it forever. */
+function fadeStep() {
+  if (++scrubTick >= SCRUB_EVERY) { scrubTick = 0; return scrubAlpha(); }
+  return fadeAlpha();
+}
+/** Ask the NEXT fade to be the full wipe instead. Separate from fadeStep()
+    because the caller must use the alpha it gets back — an earlier version
+    asked for the wipe and discarded it, and the floor never went away. */
+function requestWipe() { scrubTick = SCRUB_EVERY; }
+
+/** Rising zero-crossing on X, used to phase-lock periodic figures. */
+function findTrigger(buf, maxStart, n) {
+  const limit = Math.min(maxStart, n);
+  let armed = false;
+  let best = -1;
+  for (let i = 1; i < limit; i++) {
+    const v = buf[i];
+    if (v < -0.03) { armed = true; continue; }
+    if (armed && v >= 0) { best = i; break; }
+  }
+  return best < 0 ? 0 : best;
+}
+
+function drawTrace(L, R, capacity, n, live) {
+  const m = n - 1;
+  const maxStart = Math.max(0, capacity - n);
+
+  let start = 0;
+  if (S.trigger && maxStart > 0) start = findTrigger(L, maxStart, n);
+
+  /* ---- auto-gain from the previous frame's peaks (one frame of lag on a
+     value that is exponentially smoothed anyway) ------------------------ */
+  if (S.autoGain) {
+    const pk = Math.max(lastPeakL, monoLike ? lastPeakL : lastPeakR, 1e-4);
+    const target = clamp(0.9 / pk, 0.35, 12);
+    const k = target < agGain ? 0.10 : 0.012;   // quick attack, slow release
+    agGain += (target - agGain) * k;
+  } else if (agGain !== 1) {
+    agGain += (1 - agGain) * 0.12;
+    if (Math.abs(agGain - 1) < 1e-3) agGain = 1;
+  }
+
+  const scale = T.plot * 0.5;
+  const ox = T.plotX + T.plot * 0.5 + S.offX * scale;
+  const oy = T.plotY + T.plot * 0.5 - S.offY * scale;
+  /* Which way each axis points is a property of the MATERIAL, not a mistake to
+     be corrected silently: X = left channel and Y = right with positive up is the
+     scope convention, and a track made for the opposite polarity (or a reference
+     video whose Y input was inverted) will look mirrored without these. */
+  const kx = scale * S.gainX * agGain * (S.invertX ? -1 : 1);
+  const ky = scale * S.gainY * agGain * (S.invertY ? -1 : 1);
+
+  const blanking = S.blanking;
+  const ref = Math.max(refSpeed > 0 ? refSpeed : T.plot * 0.01, T.plot * 0.0004);
+  /* ONLY a numerical floor: it keeps ref/s finite when a segment does not move
+     at all. It is deliberately tiny — anything comparable to the mean beam step
+     would compress the 1/v law (see the dose below). */
+  const eps = T.plot * 0.00002;
+  const blankAt = S.blankRatio * ref;   // explicit drop threshold, no hidden clamp
+  const topBucket = BUCKETS - 1;
+  /* ---- pass 1: map to pixels, track peaks, measure the step lengths --- */
+  let peakL = 0, peakR = 0, total = 0;
+  let prevX = 0, prevY = 0;
+  let segN = 0;                       // instances handed to the energy renderer
+  let doseMax = 1;                    // largest dose this frame (for tests)
+  if (blanking) BUCKET_N.fill(0);
+
+  for (let i = 0; i < n; i++) {
+    let l = L[start + i];
+    const al = l < 0 ? -l : l;
+    if (al > peakL) peakL = al;
+    let r = monoLike ? l : R[start + i];
+    const ar = r < 0 ? -r : r;
+    if (ar > peakR) peakR = ar;
+    if (l > 16) l = 16; else if (l < -16) l = -16;
+    if (r > 16) r = 16; else if (r < -16) r = -16;
+
+    const x = ox + l * kx;
+    const y = oy - r * ky;
+    PX[i] = x;
+    PY[i] = y;
+
+    if (i > 0) {
+      const dx = x - prevX, dy = y - prevY;
+      const s = Math.sqrt(dx * dx + dy * dy);
+      SEGR[i] = s;
+      total += s;
+    }
+    prevX = x;
+    prevY = y;
+  }
+
+  /* ---- pass 2: deposit, with the dose smoothed along the path ---------
+     Brightness is 1/speed, and on a REAL tube that is a property of a stroke:
+     the beam lingers along a slow one and races through a fast one. Sample by
+     sample, though, the step jitters (the trace of an audio signal is not a
+     smooth curve at 44 kHz), so a raw 1/step flickers at the sample pitch and
+     the trace comes out BEADED — a string of little dots, which is exactly what
+     it looked like. A phosphor does not see individual samples either: the spot
+     is a few pixels wide, so what it integrates is the average speed over its
+     own width. That is the ±3 sample box below, and it is why the dashes are
+     stroke-length rather than dot-length. */
+  for (let i = 1; i < n; i++) {
+    const s = SEGR[i];
+    {
+      const j0 = i > 3 ? i - 3 : 1, j1 = i + 3 < n ? i + 3 : n - 1;
+      let sum = 0;
+      for (let j = j0; j <= j1; j++) sum += SEGR[j];
+      const sSmooth = sum / (j1 - j0 + 1);
+      const x = PX[i];
+      const y = PY[i];
+      const prevX = PX[i - 1];
+      const prevY = PY[i - 1];
+      // Retrace blanking is an explicit comparison against the running mean
+      // speed, NOT a side effect of the bucket index. Making it explicit is
+      // what lets the threshold be a number you can state, test, and set:
+      // a segment is dropped when it is more than blankRatio times faster
+      // than the typical beam speed. It uses the RAW step: a retrace is a
+      // retrace, and averaging would smear it back in.
+      if (!blanking || s <= blankAt) {
+        /* Brightness ∝ 1/speed, and on a real tube that ratio is what makes a
+           trace DASHED: a stroke the beam lingers on blazes while the fast
+           sweep between strokes falls below the phosphor's visible threshold.
+           So the denominator carries only a numerical floor (2e-5 of the plot
+           ≈ 0.01 px), not a display floor — a floor near the mean step would
+           flatten the whole law into a 2x range and the picture would read as a
+           uniformly bright web whose contrast comes from self-overlap instead. */
+        const dose = ref / (sSmooth + eps);     // 1/v, in units of the mean step
+        if (dose > doseMax) doseMax = dose;
+        if (T.gl) {
+          /* Energy model: the same 1/v law, but it ADDS — no ladder to quantise
+             into and no ceiling, because the tone map saturates instead. The cap
+             only stops a stationary beam from overflowing a half float; 64 is
+             already far past full brightness. */
+          if (segN < T.gl.maxSegments) {
+            const o = segN * 5;
+            T.gl.segData[o] = prevX;
+            T.gl.segData[o + 1] = prevY;
+            T.gl.segData[o + 2] = x;
+            T.gl.segData[o + 3] = y;
+            T.gl.segData[o + 4] = Math.min(dose, 64);
+            segN++;
+          }
+        } else if (blanking) {
+          /* The 8-bit path has ten rungs and no accumulation buffer, so it maps
+             the same dose through a saturating curve (the tone map's, cheaply):
+             a linear ramp would pin every ordinary segment to the top rung and
+             lose the dashes. */
+          let b = Math.ceil(topBucket * (1 - 1 / (1 + dose)));
+          if (b > topBucket) b = topBucket;
+          else if (b < 1) b = 1;
+          BUCKET_IDX[b * MAXN + BUCKET_N[b]++] = i - 1;
+        }
+      }
+    }
+  }
+
+  if (blanking) {
+    const mean = total / m;
+    if (!(refSpeed > 0)) refSpeed = mean;
+    refSpeed += (mean - refSpeed) * 0.06;
+  }
+
+  /* ---- mono fallback: a single-channel file leaves Y flat ------------ */
+  if (peakR < 1e-4 && peakL > 1e-3) monoCounter++;
+  else monoCounter = 0;
+  if (monoCounter > 40) monoLike = true;
+  else if (monoCounter === 0 && monoLike && peakR > 1e-3) monoLike = false;
+  lastPeakL = peakL;
+  lastPeakR = peakR;
+
+  /* ---- paint ---------------------------------------------------------- */
+  if (T.gl) {
+    if (S.beamDot && segN < T.gl.maxSegments) {
+      // A zero-length segment with a lot of energy IS a stationary beam: the
+      // spot profile makes the dot, and the cloud makes it a flare.
+      const o = segN * 5;
+      T.gl.segData[o] = PX[n - 1];
+      T.gl.segData[o + 1] = PY[n - 1];
+      T.gl.segData[o + 2] = PX[n - 1] + 0.01;
+      T.gl.segData[o + 3] = PY[n - 1] + 0.01;
+      T.gl.segData[o + 4] = 4;
+      segN++;
+    }
+    T.gl.deposit(segN);
+  } else {
+    paintInto(T.ctx, n, S.intensity);
+  }
+  lastDoseMax = doseMax;
+
+
+  if (S.beamDot && T.ctx) {
+    const lw = S.lineWidth * T.dpr;
+    T.ctx.fillStyle = S.color;
+    T.ctx.beginPath();
+    T.ctx.arc(PX[n - 1], PY[n - 1], Math.max(1.5 * T.dpr, lw * 1.4), 0, TAU);
+    T.ctx.fill();
+  }
+}
+
+/** Stroke the already-computed beam path into `ctx` with `base` as the peak
+    alpha. This is the only accumulation layer left. */
+function paintInto(ctx, n, base) {
+  ctx.lineWidth = S.lineWidth * T.dpr;
+  ctx.lineJoin = 'round';
+  ctx.lineCap = 'round';
+  ctx.strokeStyle = S.color;
+
+  if (!S.blanking) {
+    // Plain beam path: one continuous polyline, never closed.
+    ctx.globalAlpha = clamp(base, 0, 1);
+    ctx.beginPath();
+    ctx.moveTo(PX[0], PY[0]);
+    for (let i = 1; i < n; i++) ctx.lineTo(PX[i], PY[i]);
+    ctx.stroke();
+    ctx.globalAlpha = 1;
+    return;
+  }
+
+  // Only the surviving segments reach here: anything faster than
+  // blankRatio × the mean beam speed was already dropped in the pass above.
+  // Those are retrace / blanking strokes — on a CRT the beam is racing, so
+  // they carry almost no charge per unit length, and under afterglow even a
+  // very dim one would still accumulate frame after frame into a visible
+  // chord. Dropping them outright is what removes retrace lines for good,
+  // rather than merely fading them. What is left is dimmed ∝ 1/speed.
+  for (let b = 1; b < BUCKETS; b++) {
+    const cnt = BUCKET_N[b];
+    if (!cnt) continue;
+    const base0 = b * MAXN;
+    ctx.globalAlpha = clamp(base * BUCKET_ALPHA * (b / (BUCKETS - 1)), 0, 1);
+    ctx.beginPath();
+    let prev = -2;
+    for (let k = 0; k < cnt; k++) {
+      const si = BUCKET_IDX[base0 + k];
+      if (si !== prev + 1) ctx.moveTo(PX[si], PY[si]);   // contiguous runs skip the moveTo
+      ctx.lineTo(PX[si + 1], PY[si + 1]);
+      prev = si;
+    }
+    ctx.stroke();
+  }
+  ctx.globalAlpha = 1;
+}
+
+
+function resetTraceState({ settle = false } = {}) {
+  refSpeed = 0;
+  agGain = 1;
+  scrubTick = 0;
+  monoCounter = 0;
+  monoLike = false;
+  lastPeakL = 0;
+  lastPeakR = 0;
+  flags.redraw = true;
+  if (settle) flags.settle = 100;
+}
+
+/** The reference speed is stale whenever the window or the trigger moves. */
+function resetRefSpeed() { refSpeed = 0; flags.redraw = true; }
+
+/** The peaks the frame log timestamps, and the dose the tests read. */
+const peaks = () => ({ l: lastPeakL, r: lastPeakR });
+const doseMax = () => lastDoseMax;
+const segmentCount = () => (T.gl ? T.gl.state.segments : 0);
+const haloOn = () => (S.halo > 0 ? 1 : 0);
+
+__exp.doseMax = doseMax;
+__exp.drawTrace = drawTrace;
+__exp.exposureFor = exposureFor;
+__exp.fadeAlpha = fadeAlpha;
+__exp.fadeLayer = fadeLayer;
+__exp.fadeStep = fadeStep;
+__exp.findTrigger = findTrigger;
+__exp.haloMix = haloMix;
+__exp.paintInto = paintInto;
+__exp.peaks = peaks;
+__exp.requestWipe = requestWipe;
+__exp.resetRefSpeed = resetRefSpeed;
+__exp.resetTraceState = resetTraceState;
+__exp.scrubAlpha = scrubAlpha;
+__exp.segmentCount = segmentCount;
+__exp.setTarget = setTarget;
+__exp.sigmaFor = sigmaFor;
+__exp.tauFor = tauFor;
+});
+
+/* ---- js/render.js -------------------------------------------------- */
+__define("js/render.js", function (__exp, __req) {
+const core = __req("js/core.js");
+const audio = __req("js/audio.js");
+const glmod = __req("js/gl.js");
+const perf = __req("js/perf.js");
+const trace = __req("js/trace.js");
+
+/* Geometry, the graticule, the beam, the two accumulation layers, the frame
+   loop and the quality governor. Everything in here is about pixels: the
+   samples arrive as arguments from audio.js, and the transport readout is a
+   hook the UI installs, so this module depends on neither. */
+const {
+  $,
+  BUCKETS,
+  FORMATTERS,
+  MAXN,
+  S,
+  TAU,
+  clamp,
+  dom,
+  flags,
+  toast,
+  winSize,
+} = core;
+
+const bctx = dom.bg.getContext('2d');
+
+/* Which renderer the trace canvas gets is decided ONCE, here: a canvas hands out
+   one context kind for its whole life, so there is no switching later. `?renderer=`
+   forces the choice (used by the tests to exercise both paths); the default asks
+   for WebGL and falls back to Canvas-2D when it is unavailable. */
+const WANT_GL = (() => {
+  const q = new URLSearchParams(location.search).get('renderer');
+  return q !== '2d';
+})();
+const GL = (() => {
+  if (!WANT_GL) return null;
+  /* Ask the machine, do not assume: a float render target that silently
+     discards every draw is worse than no WebGL at all, because the canvas is
+     then committed to a path that shows nothing. */
+  if (!glmod.probeGL()) return null;
+  return glmod.createGL(dom.trace);
+})();
+const tctx = GL ? null : dom.trace.getContext('2d');
+
+/* --------------------------------------------------------------- geometry */
+
+let W = 0, H = 0, DPR = 1;          // canvas size, in device pixels
+let PLOT = 0, PLOT_X = 0, PLOT_Y = 0; // square plotting area (keeps circles round)
+
+/* Adaptive resolution. Canvas cost scales with pixel count, so on a slow
+   machine the cheapest big win is to render fewer pixels and let the browser
+   upscale. autoScale drops (and recovers) in 1/8 steps based on measured
+   render time; it never goes below 0.5. */
+const SCALE_MIN = 0.5;
+let autoScale = 1;
+let workAvg = 0;            // ms spent inside the render section, smoothed
+let workP50 = 0;            // median of the rolling window
+let qualityCooldown = 0;
+let workStatCountdown = 30;
 
 function effectiveDpr() {
   const base = clamp(window.devicePixelRatio || 1, 1, 3);
@@ -1651,8 +3001,13 @@ function layout() {
 
   DPR = dpr; W = w; H = h;
   dom.bg.width = W; dom.bg.height = H;           // redrawn from scratch below
-  resizeKeeping(dom.burnin, nctx);
-  resizeKeeping(dom.trace, tctx);
+  if (GL) {
+    dom.trace.width = W;
+    dom.trace.height = H;
+    GL.resize(W, H);              // scaled carry-over of the accumulated energy
+  } else {
+    resizeKeeping(dom.trace, tctx);
+  }
 
   // Stay centred in the canvas and only shrink when a panel genuinely does
   // not fit in the margin beside the plot. Using max() rather than the sum
@@ -1662,13 +3017,15 @@ function layout() {
   PLOT_X = (W - PLOT) / 2;
   PLOT_Y = (H - PLOT) / 2;
 
+  trace.setTarget({ gl: GL, ctx: tctx, dpr: DPR, w: W, h: H, plot: PLOT, plotX: PLOT_X, plotY: PLOT_Y });
   drawBackground();
+  perf.noteResize(W, H, DPR);
   return true;
 }
 
 /** Resize a canvas without throwing away what is already on it.
     Assigning canvas.width clears the bitmap, which would silently destroy the
-    accumulated afterglow / burn-in on every window resize or fullscreen
+    accumulated afterglow on every window resize or fullscreen
     toggle — and the whole point of those layers is that they persist. */
 function resizeKeeping(canvas, ctx) {
   const ow = canvas.width, oh = canvas.height;
@@ -1687,6 +3044,7 @@ function resizeKeeping(canvas, ctx) {
 function applyScale() {
   W = 0; H = 0;
   if (layout()) { flags.redraw = true; flags.settle = 100; }
+  perf.noteEvent(`画质 ${Math.round(autoScale * 100)}%`);
   updatePerfBadge();
   const out = document.querySelector('[data-out="renderScale"]');
   if (out) {
@@ -1714,14 +3072,14 @@ function updatePerfBadge() {
     background) should not trigger a resolution drop, and the median is what
     a mean cannot give us. */
 function adaptQuality(workMs) {
-  recordWork(workMs);
+  perf.recordWork(workMs);
   workAvg += (workMs - workAvg) * 0.08;
 
   if (qualityCooldown > 0) qualityCooldown--;
   if (--workStatCountdown > 0) return;
   workStatCountdown = 30;
 
-  workP50 = workTrimmed(0.5);
+  workP50 = perf.workTrimmed(0.5);
   updatePerfBadge();
   if (S.renderScale !== 'auto' || qualityCooldown > 0) return;
 
@@ -1828,274 +3186,12 @@ function drawBackground() {
 
 /* ------------------------------------------------------------- renderer */
 
-const PX = new Float32Array(MAXN);
-const PY = new Float32Array(MAXN);
-/* Segment indices grouped by brightness bucket. Building these in the same
-   pass that maps samples to pixels means the whole trace is produced with
-   ONE pass over the samples plus one canvas op per drawn segment, instead of
-   one full scan per brightness level. */
-const BUCKET_IDX = new Int32Array(BUCKETS * MAXN);
-const BUCKET_N = new Int32Array(BUCKETS);
-
 let rafId = 0;
 let haveSignal = false;   // has a live frame ever been captured?
 let wasLive = false;
-let refSpeed = 0;        // smoothed mean beam speed, the 1/v blanking reference
-let agGain = 1;          // auto-gain (applied to BOTH axes to keep the figure's shape)
-let monoCounter = 0;
-let monoLike = false;
-let lastPeakL = 0;       // previous frame's peaks — auto-gain is smoothed anyway
-let lastPeakR = 0;
-
-function fadeAlpha() {
-  // 0 %  -> 1.0  (full clear every frame, zero afterglow)
-  // 100% -> 0.03 (long phosphor-like tail)
-  const p = clamp(S.persistence / 100, 0, 1);
-  return Math.pow(1 - p, 2) * 0.97 + 0.03;
-}
-
-/** Erase a layer by `alpha` — pure subtraction, never addition. */
-function fadeLayer(ctx, alpha) {
-  ctx.setTransform(1, 0, 0, 1, 0, 0);
-  ctx.globalAlpha = 1;
-  ctx.globalCompositeOperation = 'destination-out';
-  ctx.fillStyle = `rgba(0,0,0,${alpha})`;
-  ctx.fillRect(0, 0, W, H);
-  ctx.globalCompositeOperation = 'source-over';
-}
-
-/* ---- the 8-bit quantisation floor (the "residue" slider) --------------
-   destination-out multiplies alpha: n <- n*(1-a). With round-to-nearest
-   8-bit storage, every n <= 1/(2a) is a FIXED POINT and never decays. So a
-   slow fade (high 余辉) does not leave a longer ghost, it leaves a BRIGHTER
-   one — at 100% the floor is alpha ~15, clearly visible, and the whole region
-   the beam has ever swept keeps it forever.
-
-   A periodic strong scrub is the only way out: a step of 1.0 clears the floor
-   completely, and anything weaker leaves a predictable amount of it behind.
-   Hence one slider, expressed as the residue you are willing to keep.
-*/
-const SCRUB_EVERY = 180;   // frames (~3 s, longer than any visible trail)
-let scrubTick = 0;
-
-function scrubAlpha() {
-  const r = clamp(S.residue / 100, 0, 1);
-  if (r <= 0) return 1;                     // off -> wipe the floor completely
-  return Math.min(1, 3.125 / (r * 100));    // leaves a floor of roughly 16*r
-}
-
-/* ---- burn-in ---------------------------------------------------------- */
-/* A second accumulation layer that decays far more slowly than the afterglow:
-   it models phosphor *damage* rather than phosphor decay. Exposure is the
-   time-integral of beam current, so it is laid down from the same beam path
-   (and the same retrace blanking) as the trace — still crisp strokes, not a
-   blur, which is why it is not glow.
-
-   The exposure rate comes from a FRACTIONAL BUDGET, not from a tiny alpha: a
-   per-frame alpha below ~1/255 rounds away on an 8-bit backing store and
-   would never accumulate at all, so each painting uses a healthy alpha and
-   paintings are simply spaced out.
-   0 % = off, 100 % = permanent (never decays). */
-const burn = { on: false, gain: 0.03, rate: 0, decay: 0, fadeStep: 0.25, fadeEvery: 0, budget: 0, fadeTick: 0 };
-
-function clearBurnIn() {
-  if (!W || !H) return;
-  nctx.setTransform(1, 0, 0, 1, 0, 0);
-  nctx.globalAlpha = 1;
-  nctx.globalCompositeOperation = 'source-over';
-  nctx.clearRect(0, 0, W, H);
-  burn.budget = 0;
-  flags.redraw = true;
-}
-
-function updateBurnIn(force) {
-  const b = clamp(S.burnIn / 100, 0, 1);
-  const was = burn.on;
-  burn.on = b > 0.001;
-  burn.gain = 0.03;                      // per painting, well clear of 1/255
-  burn.rate = 0.02 * b;                  // paintings per frame (~1.2/s at 100%)
-  // Steady state for a pixel the beam keeps returning to is roughly
-  // rate*gain/decay, so decay is what decides how strong the ghost gets.
-  burn.decay = b >= 0.99 ? 0 : 0.0012 * Math.pow(1 - b, 2);
-  // Step big enough to clear the floor, then spread the steps out to keep the
-  // requested average rate.
-  burn.fadeStep = 0.25;
-  burn.fadeEvery = burn.decay > 0 ? Math.max(1, Math.round(burn.fadeStep / burn.decay)) : 0;
-  burn.budget = 0;
-  burn.fadeTick = 0;
-  if (force || (was && !burn.on)) clearBurnIn();   // turning it off wipes the ghost
-  const out = document.querySelector('[data-out="burnIn"]');
-  if (out) out.textContent = FORMATTERS.burnIn(S.burnIn);
-}
-
-/** Rising zero-crossing on X, used to phase-lock periodic figures. */
-function findTrigger(buf, maxStart, n) {
-  const limit = Math.min(maxStart, n);
-  let armed = false;
-  let best = -1;
-  for (let i = 1; i < limit; i++) {
-    const v = buf[i];
-    if (v < -0.03) { armed = true; continue; }
-    if (armed && v >= 0) { best = i; break; }
-  }
-  return best < 0 ? 0 : best;
-}
-
-function drawTrace(L, R, capacity, n, live) {
-  const m = n - 1;
-  const maxStart = Math.max(0, capacity - n);
-
-  let start = 0;
-  if (S.trigger && maxStart > 0) start = findTrigger(L, maxStart, n);
-
-  /* ---- auto-gain from the previous frame's peaks (one frame of lag on a
-     value that is exponentially smoothed anyway) ------------------------ */
-  if (S.autoGain) {
-    const pk = Math.max(lastPeakL, monoLike ? lastPeakL : lastPeakR, 1e-4);
-    const target = clamp(0.9 / pk, 0.35, 12);
-    const k = target < agGain ? 0.10 : 0.012;   // quick attack, slow release
-    agGain += (target - agGain) * k;
-  } else if (agGain !== 1) {
-    agGain += (1 - agGain) * 0.12;
-    if (Math.abs(agGain - 1) < 1e-3) agGain = 1;
-  }
-
-  const scale = PLOT * 0.5;
-  const ox = PLOT_X + PLOT * 0.5 + S.offX * scale;
-  const oy = PLOT_Y + PLOT * 0.5 - S.offY * scale;
-  const kx = scale * S.gainX * agGain;
-  const ky = scale * S.gainY * agGain;
-
-  const blanking = S.blanking;
-  const ref = Math.max(refSpeed > 0 ? refSpeed : PLOT * 0.01, PLOT * 0.0004);
-  const eps = PLOT * 0.0015;          // only keeps ref/s finite as s -> 0
-  const blankAt = S.blankRatio * ref;   // explicit drop threshold, no hidden clamp
-  const topBucket = BUCKETS - 1;
-
-  /* ---- ONE pass: map to pixels, track peaks, bucket the segments ------ */
-  let peakL = 0, peakR = 0, total = 0;
-  let prevX = 0, prevY = 0;
-  if (blanking) BUCKET_N.fill(0);
-
-  for (let i = 0; i < n; i++) {
-    let l = L[start + i];
-    const al = l < 0 ? -l : l;
-    if (al > peakL) peakL = al;
-    let r = monoLike ? l : R[start + i];
-    const ar = r < 0 ? -r : r;
-    if (ar > peakR) peakR = ar;
-    if (l > 16) l = 16; else if (l < -16) l = -16;
-    if (r > 16) r = 16; else if (r < -16) r = -16;
-
-    const x = ox + l * kx;
-    const y = oy - r * ky;
-    PX[i] = x;
-    PY[i] = y;
-
-    if (i > 0) {
-      const dx = x - prevX, dy = y - prevY;
-      const s = Math.sqrt(dx * dx + dy * dy);
-      total += s;
-      // Retrace blanking is an explicit comparison against the running mean
-      // speed, NOT a side effect of the bucket index. Making it explicit is
-      // what lets the threshold be a number you can state, test, and set:
-      // a segment is dropped when it is more than blankRatio times faster
-      // than the typical beam speed.
-      if (blanking && s <= blankAt) {
-        const w = ref / (s + eps);              // brightness ∝ 1/speed
-        let b = Math.ceil(w * topBucket);
-        if (b > topBucket) b = topBucket;
-        else if (b < 1) b = 1;
-        BUCKET_IDX[b * MAXN + BUCKET_N[b]++] = i - 1;
-      }
-    }
-    prevX = x;
-    prevY = y;
-  }
-
-  if (blanking) {
-    const mean = total / m;
-    if (!(refSpeed > 0)) refSpeed = mean;
-    refSpeed += (mean - refSpeed) * 0.06;
-  }
-
-  /* ---- mono fallback: a single-channel file leaves Y flat ------------ */
-  if (peakR < 1e-4 && peakL > 1e-3) monoCounter++;
-  else monoCounter = 0;
-  if (monoCounter > 40) monoLike = true;
-  else if (monoCounter === 0 && monoLike && peakR > 1e-3) monoLike = false;
-  lastPeakL = peakL;
-  lastPeakR = peakR;
-
-  /* ---- paint ---------------------------------------------------------- */
-  paintInto(tctx, n, S.intensity);
-
-  // Burn-in: the same beam path laid down a second time on the slow layer.
-  // Only while the beam is actually running — a paused scope has no beam, so
-  // re-settling the afterglow must not keep exposing the phosphor.
-  if (burn.on && live) {
-    burn.budget += burn.rate;
-    if (burn.budget >= 1) {
-      burn.budget = Math.min(burn.budget - 1, 1);   // never burst after a stall
-      paintInto(nctx, n, burn.gain);
-    }
-  }
-
-  if (S.beamDot) {
-    const lw = S.lineWidth * DPR;
-    tctx.fillStyle = S.color;
-    tctx.beginPath();
-    tctx.arc(PX[n - 1], PY[n - 1], Math.max(1.5 * DPR, lw * 1.4), 0, TAU);
-    tctx.fill();
-  }
-}
-
-/** Stroke the already-computed beam path into `ctx` with `base` as the peak
-    alpha. Shared by the afterglow layer and the burn-in layer. */
-function paintInto(ctx, n, base) {
-  ctx.lineWidth = S.lineWidth * DPR;
-  ctx.lineJoin = 'round';
-  ctx.lineCap = 'round';
-  ctx.strokeStyle = S.color;
-
-  if (!S.blanking) {
-    // Plain beam path: one continuous polyline, never closed.
-    ctx.globalAlpha = clamp(base, 0, 1);
-    ctx.beginPath();
-    ctx.moveTo(PX[0], PY[0]);
-    for (let i = 1; i < n; i++) ctx.lineTo(PX[i], PY[i]);
-    ctx.stroke();
-    ctx.globalAlpha = 1;
-    return;
-  }
-
-  // Only the surviving segments reach here: anything faster than
-  // blankRatio × the mean beam speed was already dropped in the pass above.
-  // Those are retrace / blanking strokes — on a CRT the beam is racing, so
-  // they carry almost no charge per unit length, and under afterglow even a
-  // very dim one would still accumulate frame after frame into a visible
-  // chord. Dropping them outright is what removes retrace lines for good,
-  // rather than merely fading them. What is left is dimmed ∝ 1/speed.
-  for (let b = 1; b < BUCKETS; b++) {
-    const cnt = BUCKET_N[b];
-    if (!cnt) continue;
-    const base0 = b * MAXN;
-    ctx.globalAlpha = clamp(base * (b / (BUCKETS - 1)), 0, 1);
-    ctx.beginPath();
-    let prev = -2;
-    for (let k = 0; k < cnt; k++) {
-      const si = BUCKET_IDX[base0 + k];
-      if (si !== prev + 1) ctx.moveTo(PX[si], PY[si]);   // contiguous runs skip the moveTo
-      ctx.lineTo(PX[si + 1], PY[si + 1]);
-      prev = si;
-    }
-    ctx.stroke();
-  }
-  ctx.globalAlpha = 1;
-}
-
 
 let uiTick = 0;
+let lastFrame = 0;                 // ms, for the energy model's dt
 /* The last captured window. It has to outlive the frame it was read in:
    when paused the analysers report silence and the loop deliberately
    keeps painting this instead of re-reading them. */
@@ -2108,6 +3204,7 @@ function setTickHandler(fn) { tick = fn; }
 function loop(ts) {
   rafId = requestAnimationFrame(loop);
   const now = typeof ts === 'number' ? ts : performance.now();
+  perf.recordFrame(now);           // every tick counts, even the ones that paint nothing
   // The scrubber only needs ~10 Hz; writing three DOM properties every frame
   // was costing more than it looked.
   if (now - uiTick > 100) { uiTick = now; if (tick) tick(); }
@@ -2130,7 +3227,7 @@ function loop(ts) {
     if (wasLive) {
       wasLive = false;
       flags.settle = 100;                                   // just paused: let the afterglow settle
-      if (S.residue <= 0) scrubTick = SCRUB_EVERY;    // and wipe the floor before it freezes
+      if (S.residue <= 0) trace.requestWipe();    // wipe the floor before it freezes
     }
     if (flags.redraw) flags.settle = 100;                    // settings changed: re-settle
     if (!haveSignal || flags.settle <= 0) { flags.redraw = false; return; }
@@ -2139,28 +3236,42 @@ function loop(ts) {
   flags.redraw = false;
 
   const workStart = performance.now();
-  // Afterglow is pure subtraction: destination-out only ever removes alpha,
-  // so a bright pixel can never bleed light into its neighbours.
-  if (++scrubTick >= SCRUB_EVERY) {
-    scrubTick = 0;
-    fadeLayer(tctx, scrubAlpha());
+  if (GL) {
+    /* Real elapsed time, so a stalled tab decays by the clock rather than by a
+       frame count — the whole point of a time constant. Clamped: after a long
+       stall the phosphor is simply dark, not negative. */
+    const now = performance.now();
+    const dt = lastFrame ? Math.min(0.1, (now - lastFrame) / 1000) : 1 / 60;
+    lastFrame = now;
+    const rgb = hexToRgb(S.color);
+    GL.setColour(rgb.r / 255, rgb.g / 255, rgb.b / 255);
+    GL.setExposure(trace.exposureFor(S.intensity));
+    GL.setSigma(trace.sigmaFor(S.lineWidth));
+    GL.setTau(trace.tauFor(S.persistence));
+    GL.setHalo(trace.haloMix());
+    GL.decay(dt);
   } else {
-    fadeLayer(tctx, fadeAlpha());
-  }
-  // The burn-in decays far more slowly than the afterglow, so its fade runs
-  // in chunky steps. A small per-frame step would sit below the quantisation
-  // floor and the ghost would never decay at all.
-  if (burn.on && burn.fadeEvery > 0 && ++burn.fadeTick >= burn.fadeEvery) {
-    burn.fadeTick = 0;
-    fadeLayer(nctx, burn.fadeStep);
+    // Afterglow is pure subtraction: destination-out only ever removes alpha,
+    // so a bright pixel can never bleed light into its neighbours.
+    trace.fadeLayer(tctx, trace.fadeStep());
   }
 
   try {
-    drawTrace(frame.L, frame.R, frame.capacity, winSize(), live);
+    trace.drawTrace(frame.L, frame.R, frame.capacity, winSize(), live);
+    if (GL) {
+      GL.present();
+      if (GL.state.lost && !loop.lostWarned) {
+        loop.lostWarned = true;      // a lost context is silent otherwise
+        perf.noteEvent('WebGL 上下文丢失');
+        toast('WebGL 上下文丢失，请刷新页面');
+      }
+    }
   } catch (err) {
     if (!loop.warned) { loop.warned = true; console.error('[scope] render error', err); }
   }
-  tctx.globalAlpha = 1;
+  if (tctx) tctx.globalAlpha = 1;
+  perf.setContext(GL ? GL.state.segments : 0, S.halo > 0 ? 1 : 0);
+  perf.setPeaks(trace.peaks().l, trace.peaks().r);
   adaptQuality(performance.now() - workStart);
 }
 
@@ -2168,20 +3279,6 @@ function loop(ts) {
 
 /** A track change, a preset or a reset: forget everything the previous picture
     taught the beam. `settle` asks the afterglow to rebuild from scratch. */
-function resetTraceState({ settle = false } = {}) {
-  refSpeed = 0;
-  agGain = 1;
-  scrubTick = 0;
-  monoCounter = 0;
-  monoLike = false;
-  lastPeakL = 0;
-  lastPeakR = 0;
-  flags.redraw = true;
-  if (settle) flags.settle = 100;
-}
-
-/** The reference speed is stale whenever the window or the trigger moves. */
-function resetRefSpeed() { refSpeed = 0; flags.redraw = true; }
 
 /** The quality governor restarts from scratch (used by "restore defaults"). */
 function resetQuality() { autoScale = 1; workAvg = 0; qualityCooldown = 120; }
@@ -2211,39 +3308,81 @@ function state() {
     canvas: { w: W, h: H },
     plot: { x: PLOT_X, y: PLOT_Y, size: PLOT },
     workMs: workAvg,
+    halo: S.halo,
+    doseMax: trace.doseMax(),
     work: {
-      trimmed: workTrimmed(0.25),   // load-proof headline number
-      trimmed50: workTrimmed(0.5),
-      min: workStat(0),
-      p50: workStat(0.5),
-      p95: workStat(0.95),
+      trimmed: perf.workTrimmed(0.25),   // load-proof headline number
+      trimmed50: perf.workTrimmed(0.5),
+      min: perf.workStat(0),
+      p50: perf.workStat(0.5),
+      p95: perf.workStat(0.95),
       avg: workAvg,
-      frames: workFilled,
+      frames: perf.workFilledCount(),
     },
     autoScale,
   };
 }
 
+/** The trace layer as RGBA bytes, whichever renderer is running, so a test can
+ *  read the picture without knowing or caring where it came from. */
+function readTrace(x, y, w, h) {
+  if (GL) return GL.readPixels(x, y, w, h);
+  const d = tctx.getImageData(x, y, w, h);
+  return new Uint8Array(d.data.buffer.slice(0));
+}
+
+const rendererKind = () => (GL ? 'webgl2' : 'canvas2d');
+
 /** Kick off the frame loop (idempotent — the loop re-arms itself). */
 function startLoop() { if (!rafId) rafId = requestAnimationFrame(loop); }
+
+const {
+  noteEvent,
+  perfLog,
+  recordWork,
+  resetWorkStats,
+  workSorted,
+  workStat,
+  workTrimmed,
+} = perf;
+
+const {
+  drawTrace,
+  exposureFor,
+  fadeAlpha,
+  fadeLayer,
+  fadeStep,
+  findTrigger,
+  haloMix,
+  paintInto,
+  resetRefSpeed,
+  resetTraceState,
+  scrubAlpha,
+  sigmaFor,
+  tauFor,
+} = trace;
 
 
 __exp.adaptQuality = adaptQuality;
 __exp.applyScale = applyScale;
-__exp.clearBurnIn = clearBurnIn;
 __exp.composite = composite;
 __exp.drawBackground = drawBackground;
 __exp.drawTrace = drawTrace;
 __exp.effectiveDpr = effectiveDpr;
 __exp.fadeAlpha = fadeAlpha;
 __exp.fadeLayer = fadeLayer;
+__exp.fadeStep = fadeStep;
 __exp.findTrigger = findTrigger;
 __exp.hexToRgb = hexToRgb;
 __exp.layout = layout;
 __exp.loop = loop;
 __exp.paintInto = paintInto;
 __exp.panelInset = panelInset;
+__exp.readTrace = readTrace;
+__exp.noteEvent = noteEvent;
+__exp.perfLog = perfLog;
 __exp.recordWork = recordWork;
+__exp.rendererKind = rendererKind;
 __exp.resetQuality = resetQuality;
 __exp.resetRefSpeed = resetRefSpeed;
 __exp.resetTraceState = resetTraceState;
@@ -2255,7 +3394,6 @@ __exp.scrubAlpha = scrubAlpha;
 __exp.setTickHandler = setTickHandler;
 __exp.startLoop = startLoop;
 __exp.state = state;
-__exp.updateBurnIn = updateBurnIn;
 __exp.updatePerfBadge = updatePerfBadge;
 __exp.workSorted = workSorted;
 __exp.workStat = workStat;
@@ -2287,7 +3425,7 @@ const {
 
 const {
   drawBackground,
-  updateBurnIn,
+  rendererKind,
 } = render;
 
 function applyAccent(color) {
@@ -2298,6 +3436,21 @@ function applyAccent(color) {
   drawBackground();   // the graticule is tinted from the same colour
   flags.redraw = true;
 }
+/* Two rows describe the RENDERER rather than the signal: 残留 is the 8-bit
+   quantisation floor (Canvas path only — the energy renderer has no floor to
+   scrub) and 光晕 is the energy renderer's dose-dependent spot (the Canvas path
+   strokes a constant width). A slider that moves and changes nothing is a
+   control lying about the value in use, so the inert one is disabled and the
+   label says why. The real title lives in `data-title` so both can coexist. */
+function rendererOnlyRow(key, active, why) {
+  const el = document.querySelector(`[data-set="${key}"]`);
+  if (!el) return;
+  if (!el.dataset.title) el.dataset.title = el.title || '';
+  el.disabled = !active;
+  el.title = active ? el.dataset.title : why;
+  if (el.parentElement) el.parentElement.classList.toggle('is-off', !active);
+}
+
 function syncControlsFromState() {
   for (const el of document.querySelectorAll('[data-set]')) {
     el.value = S[el.dataset.set];
@@ -2316,7 +3469,9 @@ function syncControlsFromState() {
     br.disabled = !S.blanking;
     if (br.parentElement) br.parentElement.classList.toggle('is-off', !S.blanking);
   }
-  updateBurnIn(false);
+  const gl2 = rendererKind() === 'webgl2';
+  rendererOnlyRow('halo', gl2, '光晕需要 WebGL 能量渲染器（当前是 Canvas 2D 回退）');
+  rendererOnlyRow('residue', !gl2, '残留是 8 位路径的量化地板，能量渲染器没有地板要擦（当前是 WebGL）');
   applyAccent(S.color);
 }
 
@@ -2393,6 +3548,7 @@ __exp.syncControlsFromState = syncControlsFromState;
 __define("js/presets.js", function (__exp, __req) {
 const core = __req("js/core.js");
 const apply = __req("js/apply.js");
+const render = __req("js/render.js");
 
 /* Named looks: the built-in recipes, the user's saved ones, the two modes
    (per-track memory or manual) and the export/import text. Storage lives here;
@@ -2416,14 +3572,30 @@ const {
    exceptions are rateMode and renderScale: those describe the machine you
    happen to be sitting at, and a preset that silently moved someone else's
    audio engine to 192 kHz would be a bug, not a feature. */
-const builtinPreset = (name, over) => ({ name, settings: Object.assign({}, DEFAULTS, over) });
+/* A recipe may carry a `fallback` overlay for the Canvas path. The two
+   renderers need different exposure for the same look — the energy model spreads
+   a thin stroke thinner and adds overlapping ones — and no single number serves
+   both, so the preset states both. */
+const builtinPreset = (name, over, fallback) => ({
+  name,
+  settings: Object.assign({}, DEFAULTS, over),
+  fallback: fallback || null,
+});
 /* The two recipes name all three of their numbers explicitly rather than
    inheriting "whatever the default happens to be" — that inheritance is how
    a preset silently stops matching its own documentation. */
 const BUILTIN_PRESETS = [
   builtinPreset('默认', {}),
-  builtinPreset('描边', { windowIdx: 1, persistence: 16, lineWidth: 1.15 }),          // 1024, 16 %
-  builtinPreset('填充', { windowIdx: 3, persistence: 32, lineWidth: 2.3 }),           // 4096, 32 %
+  /* The three numbers that shape the figure are the ones the README documents.
+     `intensity` is the exposure the ENERGY model needs to land on the same look,
+     and it is per recipe because a thin stroke spreads the same energy over less
+     area than a thick one: measured against each recipe's Canvas-2D appearance,
+     描边 needs ~3.5 (mean alpha 72 vs 78 there) and 填充 ~0.1 (its core saturates
+     either way — energy adds, so a dense figure blows out sooner). */
+  builtinPreset('描边', { windowIdx: 1, persistence: 16, lineWidth: 1.15, intensity: 3.5 },
+    { intensity: 0.9 }),
+  builtinPreset('填充', { windowIdx: 3, persistence: 32, lineWidth: 2.3, intensity: 0.1 },
+    { intensity: 0.9 }),
 ];
 const BUILTIN_NAMES = new Set(BUILTIN_PRESETS.map((p) => p.name));
 const PRESET_STORE = 'scope.presets.v1';
@@ -2454,7 +3626,10 @@ const findPreset = (name) => allPresets().find((p) => p.name === name) || null;
 function applyPreset(name) {
   const p = findPreset(name);
   if (!p) return;
-  applySettings(p.settings);
+  /* The Canvas path gets its own exposure, so the same recipe looks the same on
+     a machine without WebGL2. */
+  const over = p.fallback && render.rendererKind() === 'canvas2d' ? p.fallback : null;
+  applySettings(over ? Object.assign({}, p.settings, over) : p.settings);
   activePreset = name;
   noteSettingsChanged();
   renderPresetUI();
@@ -3300,7 +4475,6 @@ const {
   effectiveDpr,
   layout,
   state,
-  updateBurnIn,
 } = render;
 
 const {
@@ -3342,6 +4516,10 @@ function updateTransportUI() {
 let seekHeld = false;
 
 function bindControls() {
+  /* The shortcuts table in the README was a lie: onKey survived the module split
+     but nothing ever bound it, so space / arrows / , / . / D / S / F / O were all
+     dead. Bind it here, where every other control gets wired. */
+  document.addEventListener('keydown', onKey);
   for (const el of document.querySelectorAll('[data-set]')) {
     const key = el.dataset.set;
     const out = document.querySelector(`[data-out="${key}"]`);
@@ -3350,7 +4528,6 @@ function bindControls() {
       if (out) out.textContent = FORMATTERS[key](S[key]);
       if (key === 'color') applyAccent(S.color);
       if (key === 'windowIdx') { render.resetRefSpeed(); applyAnalyserSize(); }
-      if (key === 'burnIn') updateBurnIn(false);
       flags.redraw = true;
       noteSettingsChanged();
     };
@@ -3385,6 +4562,14 @@ function bindControls() {
       if (key === 'grid') drawBackground();
       if (key === 'trigger') render.resetRefSpeed();
       if (key === 'blanking') syncControlsFromState();   // enable/disable the threshold row
+      /* 反向 flips the axis the gain readout describes, so the readout has to
+         follow it: a bare "+1.00" next to an upside-down picture is a control
+         lying about the value in use. */
+      if (key === 'invertX' || key === 'invertY') {
+        const gainKey = key === 'invertX' ? 'gainX' : 'gainY';
+        const out = document.querySelector(`[data-out="${gainKey}"]`);
+        if (out) out.textContent = FORMATTERS[gainKey](S[gainKey]);
+      }
       flags.redraw = true;
       noteSettingsChanged();
     });
@@ -3485,9 +4670,15 @@ function bindAudioEvents(el) {
     dom.btnPlay.classList.remove('playing');
     if (tracks.length > 1) nextTrack(1);
   });
+  /* Media trouble is exactly what "没声" looks like from the inside, and it is
+     invisible while it is happening. Timestamp it into the frame log. */
+  for (const ev of ['playing', 'pause', 'waiting', 'stalled', 'suspend', 'emptied']) {
+    el.addEventListener(ev, () => render.noteEvent(`音频 ${ev}${el.error ? ' err' + el.error.code : ''}`));
+  }
   el.addEventListener('error', () => {
     if (!el.src) return;
     const code = el.error ? el.error.code : 0;
+    render.noteEvent(`音频 error code=${code}`);
     /* Chromium ships no decoder for some of these at all — canPlayType returns
        the empty string — so "cannot decode" is true but useless: it sends people
        off to re-encode a file that was never broken. Name it instead. */
@@ -3522,7 +4713,6 @@ function resetSettings() {
   applyAnalyserSize();
   applyScale();
   drawBackground();
-  updateBurnIn(true);
   presets.setActivePreset('默认');   // defaults ARE the 默认 preset, for the keys it covers
   noteSettingsChanged();
 }
@@ -3608,6 +4798,10 @@ function onKey(e) {
       dom.volume.value = String(clamp(Number(dom.volume.value) - 0.05, 0, 1));
       dom.audio.volume = Number(dom.volume.value);
       toast(`音量 ${Math.round(dom.audio.volume * 100)}%`);
+      break;
+    case 'l': case 'L':
+      render.perfLog();                 // frame log → console (copy-pasteable)
+      toast('帧统计已输出到控制台');
       break;
     case ',': nextTrack(-1); break;
     case '.': nextTrack(1); break;
@@ -3755,6 +4949,8 @@ const {
 } = audio;
 const {
   layout,
+  readTrace,
+  rendererKind,
   resetWorkStats,
   scaleLabel,
   state,
@@ -3795,8 +4991,16 @@ const {
    that no resampling is happening). Harmless in normal use. */
 window.__scope = {
   get state() {
-    return Object.assign(render.state(), audio.status());
+    // `renderer` says which trace path is live — 'webgl2' or the 'canvas2d'
+    // fallback — because a test measuring brightness needs to know which model
+    // produced it.
+    return Object.assign(render.state(), audio.status(), { renderer: render.rendererKind() });
   },
+  /* Frame-time tail as text: __scope.perf() or __scope.perf(60) for the last
+     minute. Anything a profiler would be needed for is in here instead. */
+  perf: (seconds) => render.perfLog(seconds),
+  /* The trace layer as RGBA bytes, whichever renderer is running. */
+  readTrace: (x, y, w, h) => render.readTrace(x, y, w, h),
   readAnalyser() {
     const a = currentAnalysers();
     if (!a) return null;

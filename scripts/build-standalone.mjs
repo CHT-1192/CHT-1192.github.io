@@ -247,6 +247,13 @@ const js = built.js;
 
 if (LIST) console.log('  内联模块：' + built.ids.join(', '));
 
+// 先解析一遍再发：某个模块的语法错误否则只会在浏览器里暴露，而且表现为一片空白。
+try {
+  new Function(js); // eslint-disable-line no-new-func
+} catch (err) {
+  die(`内联后的代码无法解析：${err.message}`);
+}
+
 if (js.includes('</script')) die('打包结果里有字面量 "</script"，内联会破坏文档结构。');
 
 /** 用函数替换，避免 payload 里的 `$&` 之类被当成替换模式。 */
