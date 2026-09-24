@@ -11,7 +11,7 @@
     <title>网页 Demo 入口 · CHT-1192</title>
     <meta
       name="description"
-      content="三个纯前端 Demo 的入口：2D 光线追踪、网页版示波器音乐播放器、程序化烟花秀。无需安装，打开即用。"
+      content="三个纯前端 Demo 的入口：2D 光线追踪、示波器音乐播放器、程序化烟花秀。无需安装，打开即用。"
     />
     <style>
       :root {
@@ -393,17 +393,18 @@
           <div class="body">
             <div class="bar"></div>
             <div class="title">
-              <h2>网页版示波器音乐播放器</h2>
+              <h2>示波器音乐播放器</h2>
               <span class="en">oscilloscope music · XY visualizer</span>
             </div>
             <p class="desc">
-              左声道 → X 轴，右声道 → Y 轴，用电子束轨迹画出利萨如图形和示波器音乐里的矢量画面。
-              没有回扫线，没有辉光。
+              左声道 → X 轴，右声道 → Y 轴。束流按能量累积绘制（WebGL2，无 WebGL 时走 8 位路径），
+              没有回扫线，也没有辉光。
             </p>
             <ul class="chips">
+              <li>能量累积</li>
               <li>无回扫线</li>
               <li>无辉光</li>
-              <li>单文件自包含</li>
+              <li>余辉</li>
               <li>零依赖</li>
             </ul>
             <p class="note">
