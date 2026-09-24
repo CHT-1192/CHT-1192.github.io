@@ -11,7 +11,7 @@
     <title>网页 Demo 入口 · CHT-1192</title>
     <meta
       name="description"
-      content="两个纯前端 Demo 的静态入口：2D 光线追踪（精确边缘锁定）与网页版示波器音乐播放器 / XY 可视化器。无需安装、零依赖、打开即用。"
+      content="三个纯前端 Demo 的静态入口：2D 光线追踪（精确边缘锁定）、网页版示波器音乐播放器 / XY 可视化器、程序化烟花秀。无需安装、零依赖、打开即用。"
     />
     <style>
       :root {
@@ -24,6 +24,7 @@
         --dimmer: #6b6f78;
         --amber: #ffcf7a;
         --green: #3dff9c;
+        --ember: #ffb347;
         --mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
         --sans: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC",
           "Hiragino Sans GB", "Microsoft YaHei", system-ui, sans-serif;
@@ -49,7 +50,7 @@
         -webkit-font-smoothing: antialiased;
       }
 
-      /* 两盏极暗的色灯，分别对应两个 Demo 的强调色 */
+      /* 三盏极暗的色灯，分别对应三个 Demo 的强调色 */
       body::before {
         content: "";
         position: fixed;
@@ -57,12 +58,13 @@
         z-index: -1;
         pointer-events: none;
         background:
-          radial-gradient(58vw 42vw at 12% -6%, rgba(255, 207, 122, 0.075), transparent 62%),
-          radial-gradient(56vw 44vw at 92% 4%, rgba(61, 255, 156, 0.06), transparent 64%);
+          radial-gradient(46vw 40vw at 6% -8%, rgba(255, 207, 122, 0.075), transparent 62%),
+          radial-gradient(46vw 40vw at 50% -10%, rgba(61, 255, 156, 0.055), transparent 64%),
+          radial-gradient(46vw 40vw at 95% -6%, rgba(255, 179, 71, 0.075), transparent 62%);
       }
 
       .wrap {
-        max-width: 1080px;
+        max-width: 1000px;
         margin: 0 auto;
       }
 
@@ -96,7 +98,7 @@
       .grid {
         display: grid;
         gap: 22px;
-        grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
+        grid-template-columns: repeat(auto-fit, minmax(290px, 1fr));
       }
 
       .card {
@@ -330,8 +332,8 @@
         <div class="kicker">github pages · 静态入口</div>
         <h1>网页 Demo 入口</h1>
         <p class="lede">
-          两个纯前端 Demo，直接跑在浏览器里：<b>不需要安装、没有依赖、打开就能用</b>。
-          页面本身就是构建产物，源仓库各自独立。
+          三个纯前端 Demo，直接跑在浏览器里：<b>不需要安装、没有依赖、打开就能用</b>。
+          页面本身就是构建产物；前两个的源码各自独立，烟花那一个由它自己的仓库发布。
         </p>
       </header>
 
@@ -423,10 +425,57 @@
             </div>
           </div>
         </article>
+
+        <article class="card" style="--accent: var(--ember)">
+          <div class="shot">
+            <img
+              src="./assets/fireworks.png"
+              alt="烟花 Demo 画面：彩色火星与弯曲的尾迹，左上角是控制面板"
+              loading="eager"
+              decoding="async"
+            />
+          </div>
+          <div class="body">
+            <div class="bar"></div>
+            <div class="title">
+              <h2>烟花 · Fireworks</h2>
+              <span class="en">procedural fireworks</span>
+            </div>
+            <p class="desc">
+              一场程序化烟花秀：配色、发射点、爆心、花型、寿命、尾迹都是随机生成的。种子决定一切——
+              同一个数字种子每次放出的是同一场，所以一场秀可以贴进链接里发给别人。
+            </p>
+            <ul class="chips">
+              <li>5 种花型</li>
+              <li>单文件 94 KB</li>
+              <li>可存图 / 录 WebM</li>
+              <li>零依赖</li>
+            </ul>
+            <p class="note">
+              <span>▸</span>
+              <span>按 <code>R</code> 或点击画面放一发，就在你点的地方炸开；还有「每日」固定场、种子框里那个隐藏词。</span>
+            </p>
+            <div class="actions">
+              <a class="open stretch" href="./Fireworks/"
+                >打开 Demo <span class="arrow">→</span></a
+              >
+              <a
+                class="source"
+                href="https://github.com/CHT-1192/Fireworks"
+                target="_blank"
+                rel="noopener"
+                >源码 ↗</a
+              >
+            </div>
+          </div>
+        </article>
       </main>
 
       <footer>
-        <span>本仓库只做静态入口，Demo 的构建产物由 <code>scripts/sync-demos.sh</code> 从各自仓库同步。</span>
+        <span
+          >本仓库只做静态入口。前两个 Demo 的构建产物由 <code>scripts/sync-demos.sh</code> 从各自仓库同步；
+          烟花由它自己的仓库发布到 <code>/Fireworks/</code>，这里只放一张预览图。</span
+        >
         <span>
           <a href="https://github.com/CHT-1192/CHT-1192.github.io" target="_blank" rel="noopener"
             >本站源码</a

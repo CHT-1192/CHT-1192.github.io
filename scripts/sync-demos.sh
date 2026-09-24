@@ -69,6 +69,24 @@ if [ -f "$COMMITTED" ] && ! cmp -s "$COMMITTED" "$ROOT/oscilloscope/index.html";
   printf '\n  ! 提醒：%s\n' "${COMMITTED#$PROJECTS/} 落后于 public/，该仓库自己提交的那份该重新生成了。"
 fi
 
+# 烟花不在本站托管：它由自己的仓库发布到 /Fireworks/（Pages 用那份仓库的 docs/）。
+# 这里只放一张预览图，所以只能查一下线上是不是已经跟上本地构建。
+FW_REPO="${FW_REPO:-$PROJECTS/Fireworks}"
+FW_BUILD="$FW_REPO/dist/turtle_fireworks.html"
+if [ -f "$FW_BUILD" ]; then
+  printf '▸ 同步烟花预览图 → assets/fireworks.png\n'
+  cp "$FW_REPO/docs/preview/ui.png" "$ROOT/assets/fireworks.png"
+
+  fw_live="$(curl -fsS --max-time 20 "https://cht-1192.github.io/Fireworks/" 2>/dev/null | shasum | awk '{print $1}')" || fw_live=""
+  fw_local="$(shasum "$FW_BUILD" | awk '{print $1}')"
+  if [ -z "$fw_live" ]; then
+    printf '\n  ! 取不到 https://cht-1192.github.io/Fireworks/ 的线上产物，没法确认它是否最新。\n'
+  elif [ "$fw_live" != "$fw_local" ]; then
+    printf '\n  ! 提醒：/Fireworks/ 线上的产物和本地 dist/ 不一致。\n'
+    printf '    烟花由它自己的仓库发布 —— 去 %s 提交推送，线上才会跟上。\n' "${FW_REPO#$PROJECTS/}"
+  fi
+fi
+
 printf '\n完成。当前产物：\n'
 ( cd "$ROOT" && find 2d-ray-trace oscilloscope assets -type f -print0 |
   xargs -0 shasum | awk '{ printf "  %s  %s\n", substr($1, 1, 12), $2 }' )

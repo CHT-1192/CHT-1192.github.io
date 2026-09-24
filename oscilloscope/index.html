@@ -790,6 +790,7 @@ body.idle { cursor: none; }
   <header class="topbar" id="topbar">
     <div class="brand"><i></i>OSCILLOSCOPE<em>MUSIC</em></div>
     <div class="rate-badge" id="rateBadge" title="">—</div>
+    <div class="rate-badge" id="modelBadge" hidden title="">—</div>
     <div class="rate-badge perf-badge" id="perfBadge" hidden>画质 100%</div>
     <div class="tools">
       <button type="button" class="tbtn" id="btnDemo" title="内置演示信号，无需音频文件 (D)">演示信号</button>
@@ -1033,12 +1034,18 @@ const BUCKETS = 10;          // velocity-blanking brightness levels (bucket 0 = 
    default) pushed it to 5.3 % at 2048 and 12.8 % at 4096 — a picture that has
    dissolved into a solid mass. 2048 is the largest window that still stays
    under ~1 %, because a 4096 window already self-overlaps within one frame.
+   blankRatio is the one default deliberately below the midpoint. Frozen window,
+   15x as the reference (nothing blanked): 10x drops 4.0 / 5.3 / 0.4 % of the
+   lit ink on 方块 / 穿梭 / 棋盘格, 3x drops 9.7 / 15.2 / 9.4 %. What 3x takes
+   that 10x kept is the 3x-10x band of beam speeds: fast, but not obviously a
+   retrace. That lands on the material's own fastest sweeps, which is why a
+   穿梭 passage is where it shows, so raise it per track from there.
      窗口 (1 + 3) / 2 = 2 · 余辉 (16 + 32) / 2 = 24 · 线宽 (1.15 + 2.3) / 2 ≈ 1.75 */
 const DEFAULTS = {
   gainX: 1, gainY: 1, offX: 0, offY: 0,
   windowIdx: 2,
   intensity: 0.9, lineWidth: 1.75, persistence: 24, residue: 0,
-  blankRatio: 10, halo: 0,
+  blankRatio: 3, halo: 0,
   color: '#3dff9c',
   rateMode: 'auto',
   renderScale: 'auto',
@@ -1087,6 +1094,7 @@ const dom = {
   btnPlay: $('btnPlay'), btnPrev: $('btnPrev'), btnNext: $('btnNext'),
   btnSettings: $('btnSettings'), btnList: $('btnList'), btnDemo: $('btnDemo'),
   btnShot: $('btnShot'), btnFull: $('btnFull'), btnReset: $('btnReset'),
+  modelBadge: $('modelBadge'),
   panelSettings: $('panelSettings'), panelList: $('panelList'),
   trackList: $('trackList'), listCount: $('listCount'),
   fileInput: $('fileInput'), toast: $('toast'), swatches: $('swatches'),
@@ -1659,48 +1667,39 @@ void main() {
    attempt produced. Halation scatters light that has ALREADY been emitted, i.e.
    the bounded luminance, and then it can never exceed its own amplitude.
 
-   Five mip levels, weighted, approximate the long-tailed point spread function
-   for five texture fetches and no extra passes. Sum of weights = 1, so the cloud
-   adds at most uMix to any pixel. */
-/* The taps are AVERAGES over 8, 16, 32, 64, 128 and 256 pixels, and how they are
+   Four mip levels, weighted, approximate the long-tailed point spread function
+   for four texture fetches and no extra passes. */
+/* The taps are AVERAGES over 2, 16, 64 and 256 pixel cells, and how they are
    weighted is the whole game. Weighting the narrow ones (the obvious "bloom"
    choice) gives a tight halo that hugs the trace and dies within one octave.
-   Weighting them EQUALLY gives each octave the same contribution, which is what
-   a long-tailed, roughly 1/r glare looks like: a bright core, then a skirt that
-   keeps going out to a sixth of the screen. That is the cloud in reference
-   photos 2 and 3, and it is a convolution — its far field is the local average
-   luminance, which is why the cloud is obvious around a dense figure and nearly
-   invisible around one thin line. Nothing here rescales that away: the taps sum
-   to 1 and every tap is <= 1, so the cloud adds at most uMix and never becomes a
-   second image of the trace. */
+   Weighting the octaves EQUALLY gives a long, roughly 1/r skirt, which is the
+   cloud in reference photos 2 and 3.
+
+   The wide taps are gamma-lifted, and that is not decoration. A flat box average
+   is a bad estimate of a 1/r tail: a thin trace inside a 256-px cell averages a
+   few percent, so the far field came out two or three 8-bit levels above black —
+   measured, on a dense passage, as +2.6/255 on average away from the ink. Nobody
+   can see that, which is why 光晕 100 looked like nothing. pow(x, 0.75) puts the
+   tail back in the visible band; it is monotone, so the profile still falls with
+   distance, and every tap stays <= 1, so the cloud still adds at most uMix and
+   never becomes a second image of the trace. */
 const FRAG_HALO = `#version 300 es
 precision highp float;
 in vec2 vUv;
 uniform sampler2D uSrc;          // tone-mapped frame, mipmapped
 uniform sampler2D uNear;         // blurred mip 4  (~16 px cells)
 uniform sampler2D uWide;         // blurred mip 6  (~64 px cells)
+uniform sampler2D uFar;          // blurred mip 8  (~256 px cells)
 uniform vec3 uColour;
 uniform float uMix;              // halation amplitude; 0 = the pass is skipped
 out vec4 outColour;
 
-/* Three scales of the same scatter: a tight one (mip 1, whose 2-px cells are
-   already finer than a CSS pixel so its lattice is invisible), a mid one and a
-   wide one, both blurred first — see FRAG_BLUR.
-
-   The taps are AVERAGES, and how they are weighted is the whole game. Weighting
-   the narrow ones (the obvious "bloom" choice) gives a halo that hugs the trace
-   and dies within one octave; weighting the octaves EQUALLY gives the long,
-   roughly 1/r tail that reaches a sixth of the screen. That tail is the cloud in
-   reference photos 2 and 3.
-
-   Being a convolution of what is already on screen, the cloud is obvious around
-   a dense figure and nearly invisible around one thin line. That is not a defect
-   to tune away — it is why those photographs differ from each other so much. */
 void main() {
   float l = texture(uSrc, vUv).a;
-  float h = 0.40 * textureLod(uSrc, vUv, 1.0).a
-          + 0.33 * texture(uNear, vUv).a
-          + 0.27 * texture(uWide, vUv).a;
+  float h = 0.34 * textureLod(uSrc, vUv, 1.0).a
+          + 0.24 * texture(uNear, vUv).a
+          + 0.22 * pow(texture(uWide, vUv).a, 0.75)
+          + 0.20 * pow(texture(uFar, vUv).a, 0.75);
   float a = min(1.0, l + uMix * h);
   outColour = vec4(uColour * a, a);
 }`;
@@ -1795,8 +1794,6 @@ const {
   VERT_BEAM,
   VERT_QUAD,
 } = shaders;
-
-const clamp01 = (v) => (v < 0 ? 0 : v > 1 ? 1 : v);
 
 function compile(gl, type, src) {
   const s = gl.createShader(type);
@@ -1931,6 +1928,7 @@ function createGL(canvas) {
   const haloIn = { tex: null, fbo: null, w: 0, h: 0 };
   const haloNear = { tex: null, fbo: null, w: 0, h: 0 };
   const haloWide = { tex: null, fbo: null, w: 0, h: 0 };
+  const haloFar = { tex: null, fbo: null, w: 0, h: 0 };
 
   /** Allocate without destroying anything: a resize has to COPY the old
    *  accumulation first, and deleting it up front is how the picture got wiped
@@ -2031,6 +2029,7 @@ function createGL(canvas) {
     if (haloIn.tex && (haloIn.w !== w || haloIn.h !== h)) adopt(haloIn, makeHaloSrc(w, h));
     if (haloNear.tex && (haloNear.w !== w || haloNear.h !== h)) adopt(haloNear, makeHaloBlur(w, h));
     if (haloWide.tex && (haloWide.w !== w || haloWide.h !== h)) adopt(haloWide, makeHaloBlur(w, h));
+    if (haloFar.tex && (haloFar.w !== w || haloFar.h !== h)) adopt(haloFar, makeHaloBlur(w, h));
     state.width = w;
     state.height = h;
   }
@@ -2138,6 +2137,7 @@ function createGL(canvas) {
   function addHalo(from) {
     blurLevel(from, haloNear, 4);
     blurLevel(from, haloWide, 6);
+    blurLevel(from, haloFar, 8);
     gl.bindFramebuffer(gl.FRAMEBUFFER, display.fbo);
     gl.viewport(0, 0, display.w, display.h);
     gl.disable(gl.BLEND);
@@ -2151,6 +2151,9 @@ function createGL(canvas) {
     gl.activeTexture(gl.TEXTURE2);
     gl.bindTexture(gl.TEXTURE_2D, haloWide.tex);
     gl.uniform1i(progHalo.uniforms.uWide, 2);
+    gl.activeTexture(gl.TEXTURE3);
+    gl.bindTexture(gl.TEXTURE_2D, haloFar.tex);
+    gl.uniform1i(progHalo.uniforms.uFar, 3);
     gl.uniform3f(progHalo.uniforms.uColour, state.colour[0], state.colour[1], state.colour[2]);
     gl.uniform1f(progHalo.uniforms.uMix, state.halo);
     bindQuad(progHalo, gl.getAttribLocation(progHalo.p, 'aPos'));
@@ -2205,9 +2208,12 @@ function createGL(canvas) {
     setExposure(v) { state.exposure = v; },
     setSigma(v) { state.sigma = Math.max(0.5, v); },
     setTau(v) { state.tau = Math.max(0, v); },
-    setHalo(v) { state.halo = clamp01(v); },
+    /** Halation amplitude. The ceiling is 3 rather than 1 because the wide taps
+     *  are averages: at 1 the cloud peaked 2.6/255 above the ink on a dense
+     *  passage, which is below what anyone can see. */
+    setHalo(v) { state.halo = Math.max(0, Math.min(3, v)); },
     dispose() {
-      for (const t of [target, display, scratch, haloIn, haloNear, haloWide]) {
+      for (const t of [target, display, scratch, haloIn, haloNear, haloWide, haloFar]) {
         if (t.tex) gl.deleteTexture(t.tex);
         if (t.fbo) gl.deleteFramebuffer(t.fbo);
       }
@@ -2551,13 +2557,10 @@ function sigmaFor(lw) { return Math.max(0.5, lw * T.dpr * 0.5); }
    % of full brightness and the cloud is obvious, while around a single thin
    stroke the same taps average a few percent and no amplitude short of this makes
    it read at all. 光晕 is the knob for which of those you are looking at. */
-const HALO_CLOUD = 0.9;
+const HALO_CLOUD = 2.2;
 function haloMix() {
   if (!S.halo) return 0;
-  // Curved, because the cloud is a convolution of what is already on screen: on
-  // a dense figure it is obvious by 40 % and by 100 % it has washed the trace
-  // out. h^1.5 keeps the whole slider usable instead of saturating halfway.
-  return HALO_CLOUD * Math.pow(clamp(S.halo / 100, 0, 1), 1.5);
+  return HALO_CLOUD * Math.pow(clamp(S.halo / 100, 0, 1), 1.4);
 }
 
 /** Energy deposited per unit of 1/v, per frame. The constant is measured, not
@@ -3057,11 +3060,25 @@ const scaleLabel = () => `${Math.round(effectiveDpr() * 100)}%`;
 
 function updatePerfBadge() {
   const el = $('perfBadge');
-  if (!el) return;
-  const reduced = S.renderScale === 'auto' && autoScale < 1;
-  el.textContent = `画质 ${Math.round(autoScale * 100)}%`;
-  el.className = 'rate-badge perf-badge' + (reduced ? ' is-warn' : '');
-  el.hidden = !reduced;
+  if (el) {
+    const reduced = S.renderScale === 'auto' && autoScale < 1;
+    el.textContent = `画质 ${Math.round(autoScale * 100)}%`;
+    el.className = 'rate-badge perf-badge' + (reduced ? ' is-warn' : '');
+    el.hidden = !reduced;
+  }
+  /* Which model is drawing the picture is not a detail to keep in a devtools
+     object: it decides whether the brightness is accumulated energy or a ten-rung
+     alpha ladder. Say it in the top bar, and say it in the fallback's colour. */
+  const mb = dom.modelBadge;
+  if (mb) {
+    const gl = GL != null;
+    mb.textContent = gl ? '能量模型' : '8 位路径';
+    mb.title = gl
+      ? '亮度是加性累积的 1/束速 能量，浮点缓冲，饱和映射（WebGL2）'
+      : '没有 WebGL2 或浮点渲染目标，退回 8 位：亮度分 10 档、有量化地板、光晕不可用';
+    mb.className = 'rate-badge' + (gl ? '' : ' is-warn');
+    mb.hidden = false;
+  }
 }
 
 /** Shrink the render target when a frame costs too much, grow it back when
@@ -4799,10 +4816,6 @@ function onKey(e) {
       dom.audio.volume = Number(dom.volume.value);
       toast(`音量 ${Math.round(dom.audio.volume * 100)}%`);
       break;
-    case 'l': case 'L':
-      render.perfLog();                 // frame log → console (copy-pasteable)
-      toast('帧统计已输出到控制台');
-      break;
     case ',': nextTrack(-1); break;
     case '.': nextTrack(1); break;
     case 'd': case 'D': {
@@ -4811,7 +4824,14 @@ function onKey(e) {
       if (on && !S.trigger) { S.trigger = true; syncControlsFromState(); }
       break;
     }
-    case 'l': case 'L': togglePanel('panelList'); break;
+    case 'l': togglePanel('panelList'); break;
+    /* Shift+L rather than plain L: the log is a diagnostic, the playlist is what
+       people actually use, and a dead duplicate `case 'l'` was hiding the
+       collision until the docs were read against the code. */
+    case 'L':
+      render.perfLog();
+      toast('帧统计已输出到控制台');
+      break;
     case 'p': case 'P': togglePanel('panelSettings'); break;
     case 'f': case 'F':
       if (document.fullscreenElement) document.exitFullscreen();
