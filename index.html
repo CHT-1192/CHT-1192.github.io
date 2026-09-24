@@ -11,7 +11,7 @@
     <title>网页 Demo 入口 · CHT-1192</title>
     <meta
       name="description"
-      content="三个纯前端 Demo 的静态入口：2D 光线追踪（精确边缘锁定）、网页版示波器音乐播放器 / XY 可视化器、程序化烟花秀。无需安装、零依赖、打开即用。"
+      content="三个纯前端 Demo 的入口：2D 光线追踪、网页版示波器音乐播放器、程序化烟花秀。无需安装，打开即用。"
     />
     <style>
       :root {
@@ -332,8 +332,7 @@
         <div class="kicker">github pages · 静态入口</div>
         <h1>网页 Demo 入口</h1>
         <p class="lede">
-          三个纯前端 Demo，直接跑在浏览器里：<b>不需要安装、没有依赖、打开就能用</b>。
-          每个 Demo 各自托管在自己的 GitHub Pages 上，这里只是入口。
+          三个纯前端 Demo，不需要安装、没有依赖，打开就能用。
         </p>
       </header>
 
@@ -354,8 +353,8 @@
               <span class="en">exact edge locking</span>
             </div>
             <p class="desc">
-              2D 点光源硬阴影：每个角区间只投 1 条射线问出遮挡者，阴影边界再精确钉回角点上——
-              射线数由角点数决定、与 360 无关，边界沿「光源 → 角点」走，0 误差。
+              2D 点光源硬阴影：每个角区间只投 1 条射线问出遮挡者，边界再精确钉回角点上。射线数由
+              角点数决定，与 360 无关。
             </p>
             <ul class="chips">
               <li>52 条射线/帧</li>
@@ -365,7 +364,7 @@
             </ul>
             <p class="note">
               <span>▸</span>
-              <span>首次打开随机挑一颗种子，所以每个人看到的世界都不一样；打开「调试射线」能直接看到每条射线终止在角点上。</span>
+              <span>每次打开的世界都由种子决定；「调试射线」能看到每条射线都停在角点上。</span>
             </p>
             <div class="actions">
               <a class="open stretch" href="https://cht-1192.github.io/2D-Ray-Trace-Demo/"
@@ -399,7 +398,7 @@
             </div>
             <p class="desc">
               左声道 → X 轴，右声道 → Y 轴，用电子束轨迹画出利萨如图形和示波器音乐里的矢量画面。
-              两个硬性要求都做到了：没有回扫线，没有辉光。
+              没有回扫线，没有辉光。
             </p>
             <ul class="chips">
               <li>无回扫线</li>
@@ -409,7 +408,7 @@
             </ul>
             <p class="note">
               <span>▸</span>
-              <span>站点不内置音乐文件，把本地音频（<code>.flac</code> / <code>.wav</code> / <code>.mp3</code>…）拖进窗口即可播放。</span>
+              <span>不内置音乐，把本地音频（<code>.flac</code> / <code>.wav</code> / <code>.mp3</code>…）拖进窗口即可。</span>
             </p>
             <div class="actions">
               <a
@@ -444,8 +443,8 @@
               <span class="en">procedural fireworks</span>
             </div>
             <p class="desc">
-              一场程序化烟花秀：配色、发射点、爆心、花型、寿命、尾迹都是随机生成的。种子决定一切——
-              同一个数字种子每次放出的是同一场，所以一场秀可以贴进链接里发给别人。
+              一场程序化烟花秀。配色、发射点、爆心、花型、寿命、尾迹全由一颗种子决定：同一个数字，
+              永远是同一场。
             </p>
             <ul class="chips">
               <li>5 种花型</li>
@@ -455,7 +454,7 @@
             </ul>
             <p class="note">
               <span>▸</span>
-              <span>按 <code>R</code> 或点击画面放一发，就在你点的地方炸开；还有「每日」固定场、种子框里那个隐藏词。</span>
+              <span>按 <code>R</code> 或点击画面放一发；还有「每日」固定场，和一个藏在种子框里的词。</span>
             </p>
             <div class="actions">
               <a class="open stretch" href="https://cht-1192.github.io/Fireworks/"
@@ -474,10 +473,7 @@
       </main>
 
       <footer>
-        <span
-          >本仓库只是一个静态入口：三个 Demo 各自托管在自己的 GitHub Pages 上，卡片直接指向那边，
-          所以这里不需要同步任何构建产物。</span
-        >
+        <span>这里只是一个入口页。三个 Demo 各自托管在自己的 GitHub Pages 上。</span>
         <span>
           <a href="https://github.com/CHT-1192/CHT-1192.github.io" target="_blank" rel="noopener"
             >本站源码</a
