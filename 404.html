@@ -1,0 +1,107 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <meta name="color-scheme" content="dark" />
+    <title>页面不在这里 · 网页 Demo 入口</title>
+    <meta name="robots" content="noindex" />
+    <style>
+      body {
+        margin: 0;
+        min-height: 100vh;
+        display: grid;
+        place-content: center;
+        gap: 12px;
+        padding: 24px;
+        background: #0a0b0d;
+        color: #e8e9ec;
+        font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC",
+          "Hiragino Sans GB", "Microsoft YaHei", system-ui, sans-serif;
+        line-height: 1.6;
+        text-align: center;
+      }
+
+      h1 {
+        margin: 0;
+        font-size: 20px;
+        font-weight: 620;
+      }
+
+      p {
+        margin: 0;
+        color: #8d919b;
+        font-size: 14px;
+      }
+
+      a {
+        color: #ffb347;
+        text-underline-offset: 3px;
+      }
+
+      code {
+        font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+        font-size: 0.92em;
+        color: #b9bdc6;
+      }
+    </style>
+    <script>
+      /*
+       * 旧地址自动跳转。
+       *
+       * 两个 Demo 的仓库改过名，站点也从这里搬到了各仓库自己的 Pages 上，所以从前
+       * 贴出去的地址会落到这个 404 页。GitHub Pages 是静态托管，没有服务端重定向，
+       * 但会给未命中的路径送这个文件 —— 于是可以在这里把老链接接住。
+       *
+       * 匹配一律不区分大小写，所以 /Oscilloscope/、/OSCILLOSCOPE-MUSIC/、
+       * /2d-ray-trace/ 这些拼法都能转到同一个地方，不需要为每种大小写各建一个目录。
+       *
+       * query 和 #fragment 原样带走：旧链接可能是带参数的（比如 ?seed=7）。
+       */
+      (function () {
+        var TARGETS = [
+          {
+            to: 'https://cht-1192.github.io/web-oscilloscope-music-player-visualizer/',
+            // oscilloscope / oscilloscope-music，大小写不限
+            match: /^oscilloscope(-music)?$/i,
+          },
+          {
+            to: 'https://cht-1192.github.io/2D-Ray-Trace-Demo/',
+            // 2d-ray-trace / 2d-ray-trace-demo，大小写不限
+            match: /^2d-ray-trace(-demo)?$/i,
+          },
+        ];
+
+        // 取路径本身（去掉首尾斜杠与结尾的 index.html），并保留 ?query 和 #hash
+        var path = location.pathname.replace(/\/index\.html$/, '').replace(/^\/+|\/+$/g, '');
+        var suffix = location.search + location.hash;
+
+        for (var i = 0; i < TARGETS.length; i++) {
+          if (TARGETS[i].match.test(path)) {
+            var to = TARGETS[i].to;
+            if (typeof URL === 'function') {
+              to = new URL(to + suffix, location.href).href; // 顺带把后缀正规化
+            } else {
+              to += suffix;
+            }
+            location.replace(to);
+            var a = document.getElementById('go');
+            if (a) a.href = to;
+            return;
+          }
+        }
+
+        // 不是旧地址，就是单纯敲错了：把状态文案换掉，别谎称「正在跳转」
+        document.addEventListener('DOMContentLoaded', function () {
+          var msg = document.getElementById('msg');
+          if (msg) msg.textContent = '这个地址下没有页面，可能是敲错了。';
+        });
+      })();
+    </script>
+  </head>
+  <body>
+    <h1>页面不在这里</h1>
+    <p id="msg">这个地址已经搬到别处，正在跳转…</p>
+    <p><a id="go" href="https://cht-1192.github.io/">回到入口页 →</a></p>
+  </body>
+</html>
